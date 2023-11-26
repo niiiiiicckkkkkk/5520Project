@@ -40,7 +40,11 @@ library
   import:
       common-stanza
   exposed-modules:
-      Lib
+      LuParser 
+      LuStepper
+      LuSyntax
+      Parser 
+      State 
   hs-source-dirs:
       src
 
