@@ -1,9 +1,7 @@
-import Test.HUnit
-import Test.QuickCheck
-
-import Lib
+import LuParserTest qualified as LP
 
 main :: IO ()
-main = do 
-    putStrLn someFunc
-    putStrLn "Test suite not yet implemented"
+main = do
+  putStrLn "*** Testing LuParser ***"
+  LP.test_all -- unit tests
+  LP.qc -- quickcheck properties
