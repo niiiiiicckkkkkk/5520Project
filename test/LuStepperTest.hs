@@ -8,9 +8,6 @@ import State qualified as S
 import Test.HUnit
 import Test.QuickCheck qualified as QC
 
-initialStore :: Store
-initialStore = Map.singleton globalTableName Map.empty
-
 extendedStore :: Store
 extendedStore =
   Map.fromList

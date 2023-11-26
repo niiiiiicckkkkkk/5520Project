@@ -15,6 +15,9 @@ import Text.Read (readMaybe)
 
 type Store = Map Name Table
 
+initialStore :: Store
+initialStore = Map.singleton globalTableName Map.empty
+
 type Table = Map Value Value
 
 globalTableName :: Name
