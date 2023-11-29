@@ -13,12 +13,21 @@ import Test.HUnit (Counts, Test (..), runTestTT, (~:), (~?=))
 import Test.QuickCheck qualified as QC
 import Text.Read (readMaybe)
 
-type Store = Map Name Table
+-- | New Datatypes
+data FEntry = FEntry [String] Block -- a representation of functions from Lu Programs
+
+type FTable = Map Name FEntry -- data structure to store function entries
+
+type Store = (Map Name TableOrStore, FTable) -- modified store holds variable bindings and functions
+
+type Table = Map Value Value -- table still holds value -> value mappings
+
+data TableOrStore -- recursive structure allows for lexical scoping
+  = Table Table
+  | Store Store
 
 initialStore :: Store
 initialStore = Map.singleton globalTableName Map.empty
-
-type Table = Map Value Value
 
 globalTableName :: Name
 globalTableName = "_G"
