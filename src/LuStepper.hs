@@ -14,49 +14,89 @@ import Test.QuickCheck qualified as QC
 import Text.Read (readMaybe)
 
 -- | New Datatypes
-data FEntry = FEntry [String] Block -- a representation of functions from Lu Programs
 
-type FTable = Map Name FEntry -- data structure to store function entries
+-- type Store = (Map Name TableOrStore, FTable, Int) -- modified store holds variable bindings and functions
+data Store = MKStr {vstore :: ValueStore, fstore :: FunctionStore, cnt :: Int}
 
-type Store = (Map Name TableOrStore, FTable) -- modified store holds variable bindings and functions
+type ValueStore = Map Name TableOrStore
 
 type Table = Map Value Value -- table still holds value -> value mappings
 
 data TableOrStore -- recursive structure allows for lexical scoping
   = Table Table
-  | Store Store
+  | Store ValueStore
+
+type FunctionStore = Map Name Function -- the store for functions
+
+data Function = Function [Name] Block -- a representation of functions from Lu Programs
 
 initialStore :: Store
-initialStore = Map.singleton globalTableName Map.empty
+initialStore = MKStr (Map.singleton refToLocal (Table Map.empty)) Map.empty 0
 
-globalTableName :: Name
-globalTableName = "_G"
+refToLocal :: Name -- scoping means that variables now have a sense of local vs global
+refToLocal = "_LOCAL"
+
+refToGlobal :: Name -- global definitions
+refToGlobal = "_GLOBAL"
 
 type Reference = (Name, Value)
 
-tableFromState :: Name -> State Store (Maybe Table)
-tableFromState tname = Map.lookup tname <$> S.get
+{-
+-- | get variable mappings by table name (ex: varMappings "_LOCAL" or varMappings "_t1")
+varMappings :: Name -> State Store (Maybe TableOrStore)
+varMappings tname = Map.lookup tname . fst <$> S.get
+-}
 
 index :: Reference -> State Store Value
-index (tableName, key) = do
-  t <- tableFromState tableName
-  case t of
-    Just t -> case Map.lookup key t of
-      Just v -> return v
-      _ -> return NilVal
-    _ -> return NilVal
+index r@(tname, valref) = do
+  s <- S.get
+  recursiveIndex r (vstore s)
+
+recursiveIndex :: Reference -> ValueStore -> State Store Value
+recursiveIndex r@(tname, valref) store = do
+  case Map.lookup refToGlobal store of
+    -- access granted to variables and tables in broader scope
+    Just (Store gstore) -> index1 r store (recursiveIndex r gstore)
+    -- no additional scope accessible
+    _ -> index1 r store (return NilVal)
+  where
+    index1 :: Reference -> ValueStore -> State Store Value -> State Store Value
+    index1 r@(tname, valref) store bc =
+      case Map.lookup tname store of
+        Just (Table table) -> case Map.lookup valref table of
+          Just value -> return value
+          Nothing -> bc
+        _ -> bc
 
 update :: Reference -> Value -> State Store ()
-update (tableName, NilVal) newVal = S.get >>= \s -> return ()
-update (tableName, key) newVal = do
-  t <- tableFromState tableName
-  S.modify (updateStore t)
+update r v' = do
+  s <- S.get
+  recursiveUpdate r v' (vstore s)
+
+recursiveUpdate :: Reference -> Value -> ValueStore -> State Store ()
+recursiveUpdate (_, NilVal) _ _ = return ()
+recursiveUpdate r@(tname, valref) v' store =
+  case Map.lookup refToGlobal store of
+    -- access granted to variables and tables in broader scope
+    Just (Store gstore) -> case Map.lookup tname store of
+      Just (Table table) -> S.modify (\s -> s {vstore = Map.insert tname (Table $ Map.insert valref v' table) . vstore $ s})
+      _ -> S.modify (\s -> s {vstore = aux r v' . vstore $ s})
+    -- no additional scope accessible
+    _ -> case Map.lookup tname store of
+      Just (Table table) -> S.modify (\s -> s {vstore = Map.insert tname (Table $ Map.insert valref v' table) . vstore $ s})
+      _ -> S.modify id
   where
-    updateStore :: Maybe Table -> (Store -> Store)
-    updateStore maybeTable =
-      case maybeTable of
-        Just t -> Map.insert tableName (Map.insert key newVal t)
-        _ -> id
+    aux :: Reference -> Value -> ValueStore -> ValueStore
+    aux r@(tname, valref) v' store =
+      case Map.lookup refToGlobal store of
+        Just (Store gstore) -> case Map.lookup tname store of
+          Just (Table table) -> Map.insert tname (Table $ Map.insert valref v' table) store
+          _ -> Map.insert refToGlobal (Store $ aux r v' gstore) store
+        _ -> case Map.lookup tname store of
+          Just (Table table) -> Map.insert tname (Table $ Map.insert valref v' table) store
+          _ -> store
+
+{-
 
 allocateTable :: [(Value, Value)] -> State Store Value
 allocateTable assocs = do
@@ -287,3 +327,5 @@ stepBackwardN ss n =
    in case prevStepper of
         Just ss' -> stepBackwardN ss' (n - 1)
         _ -> Nothing
+
+-}

@@ -1,4 +1,4 @@
-module LuStepperTest (qc, test_all) where
+module LuStepperTest (test_all) where
 
 import Data.Map (Map, (!?))
 import Data.Map qualified as Map
@@ -8,28 +8,81 @@ import State qualified as S
 import Test.HUnit
 import Test.QuickCheck qualified as QC
 
+-- | extended store now has a local and global level to test variable scoping
 extendedStore :: Store
-extendedStore =
+extendedStore = MKStr valueStore functionStore 0
+
+functionStore :: Map Name Function
+functionStore = Map.empty
+
+globalStore :: Map Name TableOrStore
+globalStore =
   Map.fromList
-    [ ( globalTableName,
-        Map.fromList
-          [ (StringVal "x", IntVal 3),
-            (StringVal "t", TableVal "_t1")
-          ]
+    [ ( refToLocal,
+        Table $
+          Map.fromList
+            [ (StringVal "x", IntVal 3),
+              (StringVal "y", BoolVal True),
+              (StringVal "people", TableVal "_t0")
+            ]
+      ),
+      ( "_t0",
+        Table $
+          Map.fromList
+            [ (StringVal "bob", StringVal "friend"),
+              (StringVal "alice", StringVal "classmate"),
+              (BoolVal True, StringVal "friend")
+            ]
+      )
+    ]
+
+valueStore :: Map Name TableOrStore
+valueStore =
+  Map.fromList
+    [ ( refToLocal,
+        Table $
+          Map.fromList
+            [ (StringVal "x", IntVal 7),
+              (StringVal "y", StringVal "whatever"),
+              (StringVal "z", StringVal "_t2"),
+              (StringVal "reviews", TableVal "_t1")
+            ]
+      ),
+      ( refToGlobal,
+        Store globalStore
       ),
       ( "_t1",
-        Map.fromList
-          [ (StringVal "y", BoolVal True),
-            (IntVal 2, TableVal "_t1")
-          ]
+        Table $
+          Map.fromList
+            [ (StringVal "CIS5520", StringVal "hard"),
+              (StringVal "CIS1210", StringVal "also hard")
+            ]
       )
     ]
 
 xref :: Reference
-xref = ("_G", StringVal "x")
+xref = (refToLocal, StringVal "x")
 
-yref :: Reference
-yref = ("_t1", StringVal "y")
+people :: Reference
+people = (refToLocal, StringVal "people")
+
+bob :: Reference
+bob = ("_t0", StringVal "bob")
+
+puppy :: Reference
+puppy = ("_t0", StringVal "max")
+
+cis460 :: Reference
+cis460 = ("_t1", StringVal "CIS4600")
+
+cis552 :: Reference
+cis552 = ("_t1", StringVal "CIS5520")
+
+-- >>> S.evalState (index xref) extendedStore
+-- IntVal 7
+
+-- >>> S.evalState (index people) extendedStore
+-- TableVal "_t0"
 
 -- | Stepper Unit Tests
 test_index :: Test
@@ -38,17 +91,27 @@ test_index =
     ~: TestList
       [ -- The global variable "x" is unitialized (i.e. not present in the initial store)
         S.evalState (index xref) initialStore ~?= NilVal,
-        -- But there is a value for "x" available in the extended store
-        S.evalState (index xref) extendedStore ~?= IntVal 3,
+        -- But there is a value for "x" available in the extended store (masks x in global scope)
+        S.evalState (index xref) extendedStore ~?= IntVal 7,
+        -- What about something not available locally but present globally?
+        S.evalState (index people) extendedStore ~?= TableVal "_t0",
         -- If a table name is not found in the store, accessing its reference also returns nil.
-        S.evalState (index yref) initialStore ~?= NilVal,
+        S.evalState (index bob) initialStore ~?= NilVal,
         -- We should also be able to access "t[1]" in the extended store
-        S.evalState (index yref) extendedStore ~?= BoolVal True,
-        S.evalState (index ("z", NilVal)) extendedStore ~?= NilVal,
+        S.evalState (index bob) extendedStore ~?= StringVal "friend",
+        -- A Table in the local scope should be accessible
+        S.evalState (index (refToLocal, StringVal "reviews")) extendedStore ~?= TableVal "_t1",
+        -- Entries in a local table should be accessible
+        S.evalState (index ("_t1", StringVal "CIS5520")) extendedStore ~?= StringVal "hard",
+        -- Indexing with Nil should fail
+        S.evalState (index ("_t0", NilVal)) extendedStore ~?= NilVal,
+        S.evalState (index ("_t1", NilVal)) extendedStore ~?= NilVal
         -- Updates using the `nil` key are ignored
-        S.execState (update ("_t1", NilVal) (IntVal 3)) extendedStore ~?= extendedStore,
-        S.evalState (index (globalTableName, StringVal "t")) extendedStore ~?= TableVal "_t1"
+        -- S.execState (update ("_t1", NilVal) (IntVal 3)) extendedStore ~?= extendedStore,
       ]
+
+test_all :: IO Counts
+test_all = runTestTT $ TestList [test_index, test_update]
 
 test_update :: Test
 test_update =
@@ -58,12 +121,17 @@ test_update =
         S.evalState (update xref (IntVal 4) >> index xref) initialStore ~?= IntVal 4,
         -- If we assign to x, then remove it, we cannot find it anymore
         S.evalState (update xref (IntVal 4) >> update xref NilVal >> index xref) initialStore ~?= NilVal,
-        -- If we assign to t.y, then we can find its new value
-        S.evalState (update yref (IntVal 5) >> index yref) extendedStore ~?= IntVal 5,
-        -- If we assign nil to t.y, then we cannot find it
-        S.evalState (update yref NilVal >> index yref) extendedStore ~?= NilVal
+        -- If we assign to a table in local scope then we can find its new value
+        S.evalState (update cis460 (StringVal "not bad") >> index cis460) extendedStore ~?= StringVal "not bad",
+        -- If we assign nil in a local table, then we cannot find the key
+        S.evalState (update cis552 NilVal >> index cis552) extendedStore ~?= NilVal,
+        -- If we assign to a table available globally we can find its new value
+        S.evalState (update puppy (StringVal "dog") >> index puppy) extendedStore ~?= StringVal "dog",
+        -- If we assign NilVal in a global table the entry is removed
+        S.evalState (update bob NilVal >> index bob) extendedStore ~?= NilVal
       ]
 
+{-
 test_resolveVar :: Test
 test_resolveVar =
   "resolveVar"
@@ -368,3 +436,5 @@ qc = do
   quickCheckN 100 prop_step_total
   putStrLn "stepExec"
   quickCheckN 100 prop_stepExec
+
+-}
