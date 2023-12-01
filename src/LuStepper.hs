@@ -13,12 +13,19 @@ import Test.HUnit (Counts, Test (..), runTestTT, (~:), (~?=))
 import Test.QuickCheck qualified as QC
 import Text.Read (readMaybe)
 
-type Store = Map Name Table
+-- Store holds value mappings, function mappings and a counter for unique naming
+data Store = MKStr {vstore :: ValueStore, fstore :: FunctionStore, cnt :: Int}
+
+type ValueStore = Map Name Table
+
+type Table = Map Value Value
+
+type FunctionStore = Map Name Function
+
+type Function = ([ArgN], Block)
 
 initialStore :: Store
 initialStore = Map.singleton globalTableName Map.empty
-
-type Table = Map Value Value
 
 globalTableName :: Name
 globalTableName = "_G"
