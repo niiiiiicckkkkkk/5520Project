@@ -22,7 +22,7 @@ type Table = Map Value Value
 
 type FunctionStore = Map Name Function
 
-type Function = ([ArgN], Block)
+data Function = Function [ArgN] Block
 
 initialStore :: Store
 initialStore = Map.singleton globalTableName Map.empty
