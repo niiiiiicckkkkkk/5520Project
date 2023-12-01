@@ -160,6 +160,12 @@ tableConstP = TableConst <$> braces (P.sepBy fieldP (wsP (P.char ',')))
         fieldKeyP :: Parser TableField
         fieldKeyP = liftA2 FieldKey (brackets expP) (afterP "=" expP)
 
+funDefP :: Parser Expression
+funDefP = error "undefined"
+
+funCallP :: Parser Expression
+funCallP = error "undefined"
+
 statementP :: Parser Statement
 statementP = wsP (assignP <|> ifP <|> whileP <|> emptyP <|> repeatP)
   where

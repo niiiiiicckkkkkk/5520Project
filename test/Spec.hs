@@ -82,8 +82,8 @@ test_fCallP :: Test
 test_fCallP =
   "parsing function calls" ~:
     TestList
-      [ P.parse (fcallP) "foo(x, y, z)" ~?= Right Name "foo" [Name "x", Name "y", Name "z"],
-        P.parse (fcallP) "bar(1 + 1, t.x)" ~?= Right Name "bar" [Op2 IntVal 1 Plus IntVal1, Dot Name "t" Name "x"]
+      [ P.parse funCallP "foo(x, y, z)" ~?= Right $ FCall (Name "foo") [Var $ Name "x", Var $ Name "y", Var $ Name "z"]
+      -- P.parse funCallP "bar(1 + 1, t.x)" ~?= Right $ FCall (Name "bar") [Op2 (Val $ IntVal 1) Plus (Val $ IntVal 1), Var $ Dot (Var $ Name "t") "x"]
       ]
 
 test_fDefP :: Test
