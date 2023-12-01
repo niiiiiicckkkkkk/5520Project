@@ -1,3 +1,4 @@
+import Control.Applicative (Alternative (..))
 import Data.Map ((!))
 import Data.Map qualified as Map
 import LuParser
@@ -5,6 +6,7 @@ import LuParserTest qualified as LP
 import LuStepper
 import LuStepperTest qualified as LS
 import LuSyntax
+import Parser qualified as P
 import State qualified as S
 import Test.HUnit
 import Test.QuickCheck ((.&&.))
@@ -77,3 +79,22 @@ prop_updateValid v1 v2 store =
 -- a random list of function params is properly initialized
 prop_initFState :: [ArgN] -> [ArgV] -> Store -> Bool
 prop_initFState = undefined
+
+test_fCallP :: Test
+test_fCallP =
+  "parsing function calls" ~:
+    TestList
+      [ P.parse (fcallP) "foo(x, y, z)" ~?= Right Name "foo" [Name "x", Name "y", Name "z"],
+        P.parse (fcallP) "bar(1 + 1, t.x)" ~?= Right Name "bar" [Op2 IntVal 1 Plus IntVal1, Dot Name "t" Name "x"]
+      ]
+
+test_fDefP :: Test
+test_fDefP =
+  "parsing function definitions" ~:
+    TestList
+      [ P.parse (fdefP) "function (x, y) return x + y end"
+          ~?= Right [Name "x", Name "y"] Block [Return Op2 Name "x" Plus Name "y"]
+      ]
+
+test_fStatementP :: Test
+test_fStatementP = undefined
