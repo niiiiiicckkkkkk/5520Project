@@ -1,0 +1,13 @@
+contacts = {
+    "bob" = 2155529283,
+    "alice" = 2673358942
+}
+
+function addcontact (contacts, name, number)
+    contacts[name] = number
+end
+
+n = "tom"
+num = 5167943289
+
+addcontact(contacts, n, num)

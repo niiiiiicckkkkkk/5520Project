@@ -1,0 +1,9 @@
+function f (a, b)
+    sum = a + b 
+    return sum 
+end
+
+x = 5 
+y = 10
+z = f(x, y)
+z = f(z, x)

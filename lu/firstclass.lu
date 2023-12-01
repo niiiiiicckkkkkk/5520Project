@@ -1,0 +1,17 @@
+function getdoublef() 
+    foo = function (v) return 2 * v end 
+    double = foo 
+    return double 
+end 
+
+val = 10
+double = getdoublef()
+doubled = double(val)
+
+function applyTo(f, i)
+    result = f(i)
+    return result
+end 
+
+copy = applyTo(double, val)
+assert = copy == doubled

@@ -1,0 +1,10 @@
+global masked = 0
+masked = 10
+
+global g = 1
+
+incr = function (v) return v + g end 
+
+incr(masked)
+
+
