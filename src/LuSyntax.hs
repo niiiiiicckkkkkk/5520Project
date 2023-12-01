@@ -27,6 +27,8 @@ data Statement
   | Repeat Block Expression -- repeat s until e
   | MKFun Name [ArgN] Block -- make a function
   | CallFun Var [ArgV] -- call a function stored in Var with a [Expression] as arguments
+  | Return Expression -- exit a block with a return value
+  | ReturnNil -- exit a block without a return value
   deriving (Eq, Show)
 
 data Expression
