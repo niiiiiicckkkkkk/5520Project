@@ -72,6 +72,8 @@ prop_updateValid v1 v2 store =
       Just val -> val == v2
       Nothing -> False
 
+-- functions can only access global state and local variables
+
 -- a random list of function params is properly initialized
 prop_initFState :: [ArgN] -> [ArgV] -> Store -> Bool
 prop_initFState = undefined

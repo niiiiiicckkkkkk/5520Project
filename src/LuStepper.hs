@@ -44,6 +44,10 @@ index (tableName, key) = do
       _ -> return NilVal
     _ -> return NilVal
 
+-- need a separate index function into FunctionStore
+indexFunction :: Name -> State Store Function
+indexFunction = undefined
+
 update :: Reference -> Value -> State Store ()
 update (tableName, NilVal) newVal = S.get >>= \s -> return ()
 update (tableName, key) newVal = do

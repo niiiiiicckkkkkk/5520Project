@@ -25,6 +25,34 @@ extendedStore =
       )
     ]
 
+sampleFunction :: Function
+sampleFunction = Function ["a", "b", "c"] (Block [])
+
+completeStore :: Store
+completeStore = 
+  MKStr {
+    vstore = 
+      Map.fromList
+      [ ( globalTableName,
+          Map.fromList
+            [ (StringVal "x", IntVal 3),
+              (StringVal "t", TableVal "_t1")
+            ]
+        ),
+        ( "_t1",
+          Map.fromList
+            [ (StringVal "y", BoolVal True),
+              (IntVal 2, TableVal "_t1")
+            ]
+        )
+      ],
+    fstore =
+      Map.fromList [ 
+        ( "function1", sampleFunction ) 
+      ]
+
+  }
+
 xref :: Reference
 xref = ("_G", StringVal "x")
 
@@ -47,7 +75,10 @@ test_index =
         S.evalState (index ("z", NilVal)) extendedStore ~?= NilVal,
         -- Updates using the `nil` key are ignored
         S.execState (update ("_t1", NilVal) (IntVal 3)) extendedStore ~?= extendedStore,
-        S.evalState (index (globalTableName, StringVal "t")) extendedStore ~?= TableVal "_t1"
+        S.evalState (index (globalTableName, StringVal "t")) extendedStore ~?= TableVal "_t1",
+
+        S.evalState ((indexFunction "function1")) completeStore ~?= sampleFunction,
+        S.evalState ((indexFunction "function1")) completeStore ~?= NilVal
       ]
 
 test_update :: Test
