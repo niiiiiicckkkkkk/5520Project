@@ -130,50 +130,64 @@ evalS Empty = return () -- do nothing
 exec :: Block -> Store -> Store
 exec = S.execState . eval
 
-step :: Block -> State Store Block
-step (Block ((If e (Block ss1) (Block ss2)) : otherSs)) = do
+step :: Thread -> State Store Thread
+step (Thread []) = return $ Thread []
+step (Thread (b : bs)) = do
+  b' <- blockStep b
+  return $ Thread (b' : bs)
+
+blockStep :: Block -> State Store Block
+blockStep (Block ((If e (Block ss1) (Block ss2)) : otherSs)) = do
   v <- evalE e
   if toBool v
     then return $ Block (ss1 ++ otherSs)
     else return $ Block (ss2 ++ otherSs)
-step (Block (w@(While e (Block ss)) : otherSs)) = do
+blockStep (Block (w@(While e (Block ss)) : otherSs)) = do
   v <- evalE e
   if toBool v
     then return $ Block (ss ++ [w] ++ otherSs)
     else return $ Block otherSs
-step (Block (a@(Assign v e) : otherSs)) = do
+blockStep (Block (a@(Assign v e) : otherSs)) = do
   evalS a
   return $ Block otherSs
-step (Block ((Repeat b e) : otherSs)) = step (Block (While (Op1 Not e) b : otherSs))
-step (Block (empty : otherSs)) = return $ Block otherSs
-step b@(Block []) = return b
+blockStep (Block ((Repeat b e) : otherSs)) = blockStep (Block (While (Op1 Not e) b : otherSs))
+blockStep (Block (empty : otherSs)) = return $ Block otherSs
+blockStep b@(Block []) = return b
 
--- | Evaluate this block for a specified number of steps
-boundedStep :: Int -> Block -> State Store Block
-boundedStep 0 b = return b
-boundedStep _ b | final b = return b
-boundedStep n b = step b >>= boundedStep (n - 1)
+-- | Evaluate this thread for a specified number of steps
+boundedStep :: Int -> Thread -> State Store Thread
+boundedStep 0 t = return t
+boundedStep _ t | final t = return t
+boundedStep n t = step t >>= boundedStep (n - 1)
 
--- | Evaluate this block for a specified number of steps, using the specified store
-steps :: Int -> Block -> Store -> (Block, Store)
-steps n block = S.runState (boundedStep n block)
+-- | Evaluate this thread for a specified number of steps, using the specified store
+steps :: Int -> Thread -> Store -> (Thread, Store)
+steps n thread = S.runState (boundedStep n thread)
 
--- | Is this block completely evaluated?
-final :: Block -> Bool
-final (Block []) = True
+-- | Is this thread completely evaluated?
+final :: Thread -> Bool
+final (Thread []) = True
 final _ = False
 
-allStep :: Block -> State Store Block
-allStep b | final b = return b
-allStep b = step b >>= allStep
+blockFinished :: Block -> Bool
+blockFinished (Block []) = True
+blockFinished _ = False
 
--- | Evaluate this block to completion
-execStep :: Block -> Store -> Store
-execStep b = S.execState (allStep b)
+allStep :: Thread -> State Store Thread
+allStep t | final t = return t
+allStep t = step t >>= allStep
+
+execBlock :: Block -> State Store Block
+execBlock b | blockFinished b = return b
+execBlock b = blockStep b >>= execBlock
+
+-- | Evaluate this thread to completion
+execThread :: Thread -> Store -> Store
+execThread t = S.execState (allStep t)
 
 data Stepper = Stepper
   { filename :: Maybe String,
-    block :: Block,
+    thread :: Thread,
     store :: Store,
     history :: Maybe Stepper
   }
@@ -182,15 +196,15 @@ initialStepper :: Stepper
 initialStepper =
   Stepper
     { filename = Nothing,
-      block = mempty,
+      thread = mempty,
       store = initialStore,
       history = Nothing
     }
 
 stepForward :: Stepper -> Stepper
 stepForward ss =
-  let (curBlock, curStore) = steps 1 (block ss) (store ss)
-   in ss {block = curBlock, store = curStore, history = Just ss}
+  let (thread', store') = steps 1 (thread ss) (store ss)
+   in ss {thread = thread', store = store', history = Just ss}
 
 stepForwardN :: Stepper -> Int -> Stepper
 stepForwardN ss 0 = ss

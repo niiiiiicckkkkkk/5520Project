@@ -1,14 +1,17 @@
 module LuSyntax where
 
 import Control.Monad (mapM_)
-import qualified Data.Char as Char
+import Data.Char qualified as Char
 import Data.Map (Map)
-import qualified Data.Map as Map
+import Data.Map qualified as Map
 import Test.HUnit
 import Test.QuickCheck (Arbitrary (..), Gen)
-import qualified Test.QuickCheck as QC
+import Test.QuickCheck qualified as QC
 import Text.PrettyPrint (Doc, (<+>))
-import qualified Text.PrettyPrint as PP
+import Text.PrettyPrint qualified as PP
+
+newtype Thread = Thread [Block]
+  deriving (Eq, Show)
 
 newtype Block = Block [Statement] -- s1 ... sn
   deriving (Eq, Show)
@@ -18,6 +21,13 @@ instance Semigroup Block where
 
 instance Monoid Block where
   mempty = Block []
+
+instance Monoid Thread where
+  mempty = Thread []
+
+instance Semigroup Thread where
+  (<>) :: Thread -> Thread -> Thread
+  (<>) (Thread t1) (Thread t2) = Thread $ t1 ++ t2
 
 data Statement
   = Assign Var Expression -- x = e
@@ -173,11 +183,11 @@ class PP a where
 
 -- | Default operation for the pretty printer. Displays using standard formatting
 -- rules, with generous use of indentation and newlines.
-pretty :: PP a => a -> String
+pretty :: (PP a) => a -> String
 pretty = PP.render . pp
 
 -- | Compact version. Displays its argument without newlines.
-oneLine :: PP a => a -> String
+oneLine :: (PP a) => a -> String
 oneLine = PP.renderStyle (PP.style {PP.mode = PP.OneLineMode}) . pp
 
 instance PP Uop where
@@ -265,7 +275,8 @@ instance PP Statement where
   pp Empty = PP.semi
   pp (Repeat b e) =
     PP.hang (PP.text "repeat") 2 (pp b)
-      PP.$+$ PP.text "until" <+> pp e
+      PP.$+$ PP.text "until"
+      <+> pp e
 
 level :: Bop -> Int
 level Times = 7
@@ -275,13 +286,13 @@ level Minus = 5
 level Concat = 4
 level _ = 3 -- comparison operators
 
-instance PP a => PP (Map Value a) where
+instance (PP a) => PP (Map Value a) where
   pp m = PP.braces (PP.vcat (map ppa (Map.toList m)))
     where
       ppa (StringVal s, v2) = PP.text s <+> PP.text "=" <+> pp v2
       ppa (v1, v2) = PP.brackets (pp v1) <+> PP.text "=" <+> pp v2
 
-instance PP a => PP (Map Name a) where
+instance (PP a) => PP (Map Name a) where
   pp m = PP.braces (PP.vcat (map ppa (Map.toList m)))
     where
       ppa (s, v2) = PP.text s <+> PP.text "=" <+> pp v2
@@ -295,7 +306,7 @@ sampleExp = QC.sample' (arbitrary :: Gen Expression) >>= mapM_ (print . pp)
 sampleStat :: IO ()
 sampleStat = QC.sample' (arbitrary :: Gen Statement) >>= mapM_ (print . pp)
 
-quickCheckN :: QC.Testable prop => Int -> prop -> IO ()
+quickCheckN :: (QC.Testable prop) => Int -> prop -> IO ()
 quickCheckN n = QC.quickCheckWith $ QC.stdArgs {QC.maxSuccess = n, QC.maxSize = 100}
 
 -- | Generate a small set of names for generated tests. These names are guaranteed to not include
@@ -397,7 +408,8 @@ instance Arbitrary Statement where
     [Assign v' e | v' <- shrink v]
       ++ [Assign v e' | e' <- shrink e]
   shrink (If e b1 b2) =
-    first b1 ++ first b2
+    first b1
+      ++ first b2
       ++ [If e' b1 b2 | e' <- shrink e]
       ++ [If e b1' b2 | b1' <- shrink b1]
       ++ [If e b1 b2' | b2' <- shrink b2]
