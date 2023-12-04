@@ -15,145 +15,69 @@ import Text.Read (readMaybe)
 
 data Store = MkStr {vstore :: ValueStore, fstore :: FunctionStore}
 
-type Environment = Map Value Value
-
 type ValueStore = Map Value Value
 
 type FunctionStore = Map Name Closure
 
-data Closure = Closure {env :: Environment, function :: Function}
+data Closure = Closure {env :: ValueStore, function :: Function}
 
 data Function = Function [String] Block
 
 initialStore :: Store
-initialStore = Map.singleton globalTableName Map.empty
+initialStore = MkStr Map.empty Map.empty
 
-globalTableName :: Name
-globalTableName = "_G"
+type Reference = Value
 
-type Reference = (Name, Value)
-
+{-
 tableFromState :: Name -> State Store (Maybe Table)
 tableFromState tname = Map.lookup tname <$> S.get
+-}
 
 index :: Reference -> State Store Value
-index (tableName, key) = do
-  t <- tableFromState tableName
-  case t of
-    Just t -> case Map.lookup key t of
-      Just v -> return v
-      _ -> return NilVal
-    _ -> return NilVal
+index ref = do
+  s <- S.get
+  case Map.lookup ref (vstore s) of
+    Just val -> return val
+    Nothing -> return NilVal
 
 update :: Reference -> Value -> State Store ()
-update (tableName, NilVal) newVal = S.get >>= \s -> return ()
-update (tableName, key) newVal = do
-  t <- tableFromState tableName
-  S.modify (updateStore t)
+update NilVal v' = return ()
+update ref v' = do
+  s <- S.get
+  S.modify (updateStore $ vstore s)
   where
-    updateStore :: Maybe Table -> (Store -> Store)
-    updateStore maybeTable =
-      case maybeTable of
-        Just t -> Map.insert tableName (Map.insert key newVal t)
-        _ -> id
-
-allocateTable :: [(Value, Value)] -> State Store Value
-allocateTable assocs = do
-  store <- S.get
-  -- make a fresh name for the new table
-  let n = length (Map.keys store)
-  let tableName = "_t" ++ show n
-  -- make sure we don't have a nil key or value
-  let assocs' = filter nonNil assocs
-  -- update the store
-  S.put (Map.insert tableName (Map.fromList assocs') store)
-  return (TableVal tableName)
-
--- Keep nil out of the table
-nonNil :: (Value, Value) -> Bool
-nonNil (k, v) = k /= NilVal && v /= NilVal
+    updateStore :: ValueStore -> Store -> Store
+    updateStore env store = store {vstore = Map.insert ref v' env}
 
 -- | Convert a variable into a reference into the store.
 -- Fails when the var is `t.x` or t[1] and `t` is not defined in the store
 -- when the var is `2.y` or `nil[2]` (i.e. not a `TableVal`)
 -- or when the var is t[nil]
-resolveVar :: Var -> State Store (Maybe Reference)
+resolveVar :: Var -> State Store Reference
 resolveVar (Name n) = do
-  mGlobalTable <- tableFromState globalTableName
-  return $ case mGlobalTable of
-    Just globalTable -> Just (globalTableName, StringVal n)
-    _ -> Nothing
-resolveVar (Dot exp n) = do
-  mGlobalTable <- tableFromState globalTableName
-  e <- evalE exp
-  return $ case (e, mGlobalTable) of
-    (TableVal tname, Just globalTable) -> Just (tname, StringVal n)
-    _ -> Nothing
-resolveVar (Proj exp1 exp2) = do
-  e1 <- evalE exp1
-  e2 <- evalE exp2
-  return $ case (e1, e2) of
-    (_, NilVal) -> Nothing
-    (TableVal t1, v) -> Just (t1, v)
-    _ -> Nothing
+  return $ StringVal n
+resolveVar (Dot exp n) = error "no tables"
+resolveVar (Proj exp1 exp2) = error "no tables"
 
 -- | Expression evaluator
 evalE :: Expression -> State Store Value
 evalE (Var v) = do
-  mr <- resolveVar v -- see above
-  case mr of
-    Just r -> index r
-    Nothing -> return NilVal
+  ref <- resolveVar v -- see above
+  index ref
 evalE (Val v) = return v
 evalE (Op2 e1 o e2) = evalOp2 o <$> evalE e1 <*> evalE e2
-evalE (Op1 o e) = do
-  s <- S.get
-  e' <- evalE e
-  evalOp1 o e'
-evalE (TableConst _fs) = evalTableConst _fs
+evalE (Op1 o e) = evalOp1 o <$> evalE e
+evalE (TableConst _fs) = error "no tables"
 
-fieldToPair :: TableField -> State Store (Value, Value)
-fieldToPair (FieldName n exp) = do
-  e <- evalE exp
-  return (StringVal n, e)
-fieldToPair (FieldKey exp1 exp2) = do
-  e1 <- evalE exp1
-  e2 <- evalE exp2
-  return (e1, e2)
-
-accuFieldToPair :: TableField -> State Store [(Value, Value)] -> State Store [(Value, Value)]
-accuFieldToPair tf accu = do
-  pair <- fieldToPair tf
-  rest <- accu
-  return (pair : rest)
-
-evalTableConst :: [TableField] -> State Store Value
-evalTableConst xs = do
-  vs <- helper xs
-  allocateTable vs
-  where
-    helper :: [TableField] -> State Store [(Value, Value)]
-    helper = foldr accuFieldToPair (return [])
-
-getTableSizeState :: String -> State Store (Maybe Int)
-getTableSizeState v =
-  S.get >>= \s -> return $ do
-    targetTable <- Map.lookup v s
-    return $ length targetTable
-
-evalOp1 :: Uop -> Value -> State Store Value
-evalOp1 Neg (IntVal v) = return $ IntVal $ negate v
-evalOp1 Len (StringVal v) = return $ IntVal $ length v
-evalOp1 Len (TableVal v) = do
-  ml <- getTableSizeState v
-  return $ case ml of
-    Just l -> IntVal l
-    _ -> NilVal
-evalOp1 Len iv@(IntVal v) = return iv
-evalOp1 Len (BoolVal True) = return $ IntVal 1
-evalOp1 Len (BoolVal False) = return $ IntVal 0
-evalOp1 Not v = return $ BoolVal $ not $ toBool v
-evalOp1 _ _ = return NilVal
+evalOp1 :: Uop -> Value -> Value
+evalOp1 Neg (IntVal v) = IntVal $ negate v
+evalOp1 Len (StringVal v) = IntVal $ length v
+evalOp1 Len (TableVal v) = error "no tables"
+evalOp1 Len iv@(IntVal v) = iv
+evalOp1 Len (BoolVal True) = IntVal 1
+evalOp1 Len (BoolVal False) = IntVal 0
+evalOp1 Not v = BoolVal $ not $ toBool v
+evalOp1 _ _ = NilVal
 
 evalOp2 :: Bop -> Value -> Value -> Value
 evalOp2 Plus (IntVal i1) (IntVal i2) = IntVal (i1 + i2)
