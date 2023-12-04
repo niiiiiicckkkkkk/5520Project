@@ -110,22 +110,20 @@ eval (Block ss) = mapM_ evalS ss
 
 -- | Statement evaluator
 evalS :: Statement -> State Store ()
-evalS (If e s1 s2) = do
+evalS (If e b1 b2) = do
   v <- evalE e
-  if toBool v then eval s1 else eval s2
-evalS w@(While e ss) = do
+  if toBool v then eval b1 else eval b2
+evalS w@(While e b) = do
   v <- evalE e
   when (toBool v) $ do
-    eval ss
+    eval b
     evalS w
 evalS (Assign v e) = do
   -- update global variable or table field v to value of e
   s <- S.get
-  mRef <- resolveVar v
+  ref <- resolveVar v
   e' <- evalE e
-  case mRef of
-    Just ref -> update ref e'
-    _ -> return ()
+  update ref e'
 evalS s@(Repeat b e) = evalS (While (Op1 Not e) b) -- keep evaluating block b until expression e is true
 evalS Empty = return () -- do nothing
 
@@ -144,7 +142,7 @@ step (Block (w@(While e (Block ss)) : otherSs)) = do
     then return $ Block (ss ++ [w] ++ otherSs)
     else return $ Block otherSs
 step (Block (a@(Assign v e) : otherSs)) = do
-  newState <- evalS a
+  evalS a
   return $ Block otherSs
 step (Block ((Repeat b e) : otherSs)) = step (Block (While (Op1 Not e) b : otherSs))
 step (Block (empty : otherSs)) = return $ Block otherSs
