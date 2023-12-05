@@ -105,18 +105,22 @@ toBool (BoolVal False) = False
 toBool NilVal = False
 toBool _ = True
 
-eval :: Block -> State Store ()
-eval (Block ss) = mapM_ evalS ss
+eval :: Thread -> State Store ()
+eval (Thread (Block ss : bs)) = mapM_ evalS ss
+eval _ = mapM_ evalS []
+
+evalB :: Block -> State Store ()
+evalB (Block ss) = mapM_ evalS ss
 
 -- | Statement evaluator
 evalS :: Statement -> State Store ()
 evalS (If e b1 b2) = do
   v <- evalE e
-  if toBool v then eval b1 else eval b2
+  if toBool v then evalB b1 else evalB b2
 evalS w@(While e b) = do
   v <- evalE e
   when (toBool v) $ do
-    eval b
+    evalB b
     evalS w
 evalS (Assign v e) = do
   -- update global variable or table field v to value of e
@@ -127,8 +131,11 @@ evalS (Assign v e) = do
 evalS s@(Repeat b e) = evalS (While (Op1 Not e) b) -- keep evaluating block b until expression e is true
 evalS Empty = return () -- do nothing
 
-exec :: Block -> Store -> Store
-exec = S.execState . eval
+exec :: Thread -> Store -> (Thread, Store)
+exec t@(Thread (b : bs)) s = (Thread bs, store)
+  where
+    store = S.execState (eval t) s
+exec (Thread []) s = (Thread [], s)
 
 step :: Thread -> State Store Thread
 step (Thread []) = return $ Thread []
@@ -157,33 +164,36 @@ blockStep b@(Block []) = return b
 -- | Evaluate this thread for a specified number of steps
 boundedStep :: Int -> Thread -> State Store Thread
 boundedStep 0 t = return t
-boundedStep _ t | final t = return t
+boundedStep _ t | threadFinal t = return t
 boundedStep n t = step t >>= boundedStep (n - 1)
 
 -- | Evaluate this thread for a specified number of steps, using the specified store
 steps :: Int -> Thread -> Store -> (Thread, Store)
 steps n thread = S.runState (boundedStep n thread)
 
--- | Is this thread completely evaluated?
-final :: Thread -> Bool
-final (Thread []) = True
-final _ = False
+-- | Is this block completely evaluated?
+blockFinal :: Block -> Bool
+blockFinal (Block []) = True
+blockFinal _ = False
 
-blockFinished :: Block -> Bool
-blockFinished (Block []) = True
-blockFinished _ = False
+threadFinal :: Thread -> Bool
+threadFinal (Thread []) = True
+threadFinal _ = False
 
-allStep :: Thread -> State Store Thread
-allStep t | final t = return t
-allStep t = step t >>= allStep
+allStep :: Block -> State Store Block
+allStep b | blockFinal b = return b
+allStep b = blockStep b >>= allStep
 
-execBlock :: Block -> State Store Block
-execBlock b | blockFinished b = return b
-execBlock b = blockStep b >>= execBlock
+execBlock :: Thread -> State Store Thread
+execBlock (Thread (b : bs)) = do
+  allStep b
+  return $ Thread bs
+execBlock t@(Thread []) = return t
 
 -- | Evaluate this thread to completion
-execThread :: Thread -> Store -> Store
-execThread t = S.execState (allStep t)
+
+-- execThread :: Thread -> Store -> Store
+-- execThread t = S.execState (allStep t)
 
 data Stepper = Stepper
   { filename :: Maybe String,

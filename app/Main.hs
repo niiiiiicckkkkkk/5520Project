@@ -5,13 +5,14 @@ import Data.Maybe (fromMaybe)
 import LuParser (parseLuExp, parseLuFile)
 import LuStepper
   ( Stepper (..),
+    Store (MkStr, fstore, vstore),
     evaluate,
     exec,
     initialStepper,
     stepBackwardN,
     stepForwardN,
   )
-import LuSyntax (Block (Block), pretty)
+import LuSyntax (Block (Block), Thread (Thread), pretty)
 import System.IO (BufferMode (NoBuffering), hSetBuffering, stdout)
 import Text.Read (readMaybe)
 
@@ -32,19 +33,19 @@ main = go initialStepper
             (Left _) -> do
               putStr "Failed to parse file"
               go ss
-            (Right b) -> do
+            (Right t) -> do
               putStr ("Loaded " ++ fn ++ ", initializing stepper\n")
-              go (ss {filename = Just fn, block = b})
+              go (ss {filename = Just fn, thread = t})
         -- dump the store
         Just (":d", _) -> do
-          putStrLn (pretty (store ss))
+          putStrLn (pretty $ vstore $ store ss)
           go ss
         -- quit the stepper
         Just (":q", _) -> return ()
         -- run current block to completion
         Just (":r", _) ->
-          let s' = exec (block ss) (store ss)
-           in go ss {block = mempty, store = s', history = Just ss}
+          let (t', s') = exec (thread ss) (store ss)
+           in go ss {thread = t', store = s', history = Just ss}
         -- next statement (could be multiple)
         Just (":n", strs) -> do
           let numSteps :: Int
@@ -80,6 +81,7 @@ main = go initialStepper
             putStrLn "?"
             go ss
     prompt :: Stepper -> IO ()
-    prompt Stepper {block = Block []} = return ()
-    prompt Stepper {block = Block (s : _)} =
+    prompt Stepper {thread = Thread []} = return ()
+    prompt Stepper {thread = Thread ((Block (s : ss)) : _)} =
       putStr "--> " >> putStrLn (pretty s)
+    prompt s@(Stepper {thread = Thread (Block [] : bs)}) = prompt s {thread = Thread bs}
