@@ -2,11 +2,12 @@ module Main where
 
 import Data.List qualified as List
 import Data.Maybe (fromMaybe)
-import LuParser (parseLuExp, parseLuFile)
+import LuParser (parseLuExp, parseLuFile, parseStatement)
 import LuStepper
   ( Stepper (..),
     Store (MkStr, fstore, vstore),
     evaluate,
+    evaluateS,
     exec,
     initialStepper,
     stepBackwardN,
@@ -72,14 +73,20 @@ main = go initialStepper
               go ss
 
         -- evaluate an expression in the current state
-        _ -> case LuParser.parseLuExp str of
-          Right exp -> do
-            let v = evaluate exp (store ss)
-            putStrLn (pretty v)
-            go ss
-          Left _s -> do
-            putStrLn "?"
-            go ss
+        _ ->
+          case LuParser.parseStatement str of
+            Right st ->
+              let s' = evaluateS st (store ss)
+               in go $ ss {store = s'}
+            Left _s -> do
+              case LuParser.parseLuExp str of
+                Right exp -> do
+                  let v = evaluate exp (store ss)
+                  putStrLn (pretty v)
+                  go ss
+                Left _s -> do
+                  putStrLn "?"
+                  go ss
     prompt :: Stepper -> IO ()
     prompt Stepper {thread = Thread []} = return ()
     prompt Stepper {thread = Thread ((Block (s : ss)) : _)} =

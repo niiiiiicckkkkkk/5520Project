@@ -183,6 +183,9 @@ toThread b = Thread [b]
 parseLuExp :: String -> Either P.ParseError Expression
 parseLuExp = P.parse expP
 
+parseStatement :: String -> Either P.ParseError Statement
+parseStatement = P.parse statementP
+
 parseLuStat :: String -> Either P.ParseError Statement
 parseLuStat = P.parse statementP
 

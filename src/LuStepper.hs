@@ -98,6 +98,9 @@ evalOp2 _ _ _ = NilVal
 evaluate :: Expression -> Store -> Value
 evaluate e = S.evalState (evalE e)
 
+evaluateS :: Statement -> Store -> Store
+evaluateS st = S.execState $ evalS st
+
 -- | Determine whether a value should be interpreted as true or false when
 -- used as a condition.
 toBool :: Value -> Bool
@@ -155,7 +158,7 @@ blockStep (Block (w@(While e (Block ss)) : otherSs)) = do
     then return $ Block (ss ++ [w] ++ otherSs)
     else return $ Block otherSs
 blockStep (Block (a@(Assign v e) : otherSs)) = do
-  evalS a
+  s' <- evalS a
   return $ Block otherSs
 blockStep (Block ((Repeat b e) : otherSs)) = blockStep (Block (While (Op1 Not e) b : otherSs))
 blockStep (Block (empty : otherSs)) = return $ Block otherSs
