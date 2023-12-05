@@ -72,6 +72,8 @@ expP = compP
         <|> Var <$> varP
         <|> parens expP
         <|> Val <$> valueP
+        <|> FDefExp <$> fDefP
+        <|> FCallExp <$> fCallP
 
 -- | Parse an operator at a specified precedence level
 opAtLevel :: Int -> Parser (Expression -> Expression -> Expression)
@@ -159,6 +161,14 @@ tableConstP = TableConst <$> braces (P.sepBy fieldP (wsP (P.char ',')))
         fieldNameP = liftA2 FieldName nameP (afterP "=" expP)
         fieldKeyP :: Parser TableField
         fieldKeyP = liftA2 FieldKey (brackets expP) (afterP "=" expP)
+
+fCallP :: Parser FCall
+fCallP = FCall <$> varP <*> parens (many expP)
+
+fDefP :: Parser FDef
+fDefP = FDef <$> wsP (afterP "function" $ parens $ P.sepBy nameP (wsP (P.char ','))) <*> blockP
+
+-- fDefP = FDef <$> many nameP <*> afterP "function" blockP <* stringP "end"
 
 statementP :: Parser Statement
 statementP = wsP (assignP <|> ifP <|> whileP <|> emptyP <|> repeatP)

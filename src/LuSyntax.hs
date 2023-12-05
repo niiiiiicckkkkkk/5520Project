@@ -43,7 +43,13 @@ data Expression
   | Op1 Uop Expression -- unary operators
   | Op2 Expression Bop Expression -- binary operators
   | TableConst [TableField] -- table construction, { x = 3 , y = 5 }
+  | FDefExp FDef
+  | FCallExp FCall
   deriving (Eq, Show)
+
+data FDef = FDef [String] Block deriving (Eq, Show)
+
+data FCall = FCall Var [Expression] deriving (Eq, Show)
 
 data Value
   = NilVal -- nil

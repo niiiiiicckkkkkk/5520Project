@@ -68,6 +68,8 @@ evalE (Val v) = return v
 evalE (Op2 e1 o e2) = evalOp2 o <$> evalE e1 <*> evalE e2
 evalE (Op1 o e) = evalOp1 o <$> evalE e
 evalE (TableConst _fs) = error "no tables"
+evalE (FCallExp (FCall var argexps)) = error "function call"
+evalE (FDefExp (FDef argnames block)) = error "function declaration"
 
 evalOp1 :: Uop -> Value -> Value
 evalOp1 Neg (IntVal v) = IntVal $ negate v
