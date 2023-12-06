@@ -200,4 +200,7 @@ parseLuStat :: String -> Either P.ParseError Statement
 parseLuStat = P.parse statementP
 
 parseLuFile :: String -> IO (Either P.ParseError Thread)
-parseLuFile = P.parseFromFile $ toThread <$> (const <$> blockP <*> P.eof)
+parseLuFile = P.parseFromFile $ toThread <$> blockP
+
+-- parseLuFile :: String -> IO (Either P.ParseError Block)
+-- parseLuFile = P.parseFromFile (const <$> blockP <*> P.eof)
