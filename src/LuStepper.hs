@@ -68,8 +68,57 @@ evalE (Val v) = return v
 evalE (Op2 e1 o e2) = evalOp2 o <$> evalE e1 <*> evalE e2
 evalE (Op1 o e) = evalOp1 o <$> evalE e
 evalE (TableConst _fs) = error "no tables"
-evalE (FCallExp (FCall var argexps)) = error "function call"
-evalE (FDefExp (FDef argnames block)) = error "function declaration"
+evalE (FCallExp (FCall var argexps)) = do
+  s <- S.get
+  r <- resolveVar var
+  ref <- index r
+  case ref of
+    (FRef fref) ->
+      let closure = Map.lookup fref (fstore s)
+       in case closure of
+            Nothing -> return NilVal
+            Just cs -> do
+              setEnv (env cs) (extractArgnames . function $ cs) argexps
+              s' <- S.get
+              let s'' = (S.execState $ evalB (extractFunction . function $ cs)) s'
+              let returned = pullReturn s''
+               in do
+                    S.put s
+                    return returned
+    _ -> return NilVal
+evalE (FDefExp (FDef argnames block)) = do
+  s <- S.get
+  let len = length $ Map.keys (fstore s)
+  let ref = "_f" ++ show len
+  let c = Closure {env = vstore s, function = Function argnames block}
+   in S.put s {fstore = Map.insert ref c (fstore s)}
+  return (FRef ref)
+
+-- let s' = S.execState $ evalB (extractFunction . function $ cs)
+
+pullReturn :: Store -> Value
+pullReturn store = case Map.lookup (StringVal "_return") (vstore store) of
+  Nothing -> NilVal
+  Just val -> val
+
+extractFunction :: Function -> Block
+extractFunction (Function argnames block) = block
+
+extractArgnames :: Function -> [String]
+extractArgnames (Function argnames block) = argnames
+
+setEnv :: ValueStore -> [String] -> [Expression] -> State Store ()
+setEnv vs (n : ns) (e : es) = do
+  val <- evalE e
+  update (StringVal n) val
+  setEnv vs ns es
+setEnv vs [] (e : es) = return ()
+setEnv vs (n : ns) [] = update (StringVal n) NilVal
+setEnv vs [] [] = return ()
+
+-- pull out the correct block
+-- bind arguments in the new environment
+-- return the resulting value
 
 evalOp1 :: Uop -> Value -> Value
 evalOp1 Neg (IntVal v) = IntVal $ negate v
@@ -135,6 +184,10 @@ evalS (Assign v e) = do
   update ref e'
 evalS s@(Repeat b e) = evalS (While (Op1 Not e) b) -- keep evaluating block b until expression e is true
 evalS Empty = return () -- do nothing
+evalS (Return e) = do
+  v <- evalE e
+  update (StringVal "_return") v
+  return ()
 
 exec :: Thread -> Store -> (Thread, Store)
 exec t@(Thread (b : bs)) s = (Thread bs, store)

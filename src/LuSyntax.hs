@@ -35,6 +35,7 @@ data Statement
   | While Expression Block -- while e do s end
   | Empty -- ';'
   | Repeat Block Expression -- repeat s until e
+  | Return Expression
   deriving (Eq, Show)
 
 data Expression
@@ -57,6 +58,7 @@ data Value
   | BoolVal Bool -- false, true
   | StringVal String -- "abd"
   | TableVal Name -- <not used in source programs>
+  | FRef Name -- index into the function store
   deriving (Eq, Show, Ord)
 
 data Uop
@@ -224,6 +226,7 @@ instance PP Value where
   pp NilVal = PP.text "nil"
   pp (StringVal s) = PP.text ("\"" <> s <> "\"")
   pp (TableVal t) = PP.text "<" <> PP.text t <> PP.text ">"
+  pp (FRef r) = PP.text "function reference: " <> PP.text r
 
 isBase :: Expression -> Bool
 isBase TableConst {} = True

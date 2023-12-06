@@ -69,11 +69,11 @@ expP = compP
         <|> Op1 <$> uopP <*> uopexpP
     baseP =
       tableConstP
+        <|> FDefExp <$> fDefP
+        <|> FCallExp <$> fCallP
         <|> Var <$> varP
         <|> parens expP
         <|> Val <$> valueP
-        <|> FDefExp <$> fDefP
-        <|> FCallExp <$> fCallP
 
 -- | Parse an operator at a specified precedence level
 opAtLevel :: Int -> Parser (Expression -> Expression -> Expression)
@@ -163,15 +163,13 @@ tableConstP = TableConst <$> braces (P.sepBy fieldP (wsP (P.char ',')))
         fieldKeyP = liftA2 FieldKey (brackets expP) (afterP "=" expP)
 
 fCallP :: Parser FCall
-fCallP = FCall <$> varP <*> parens (many expP)
+fCallP = FCall <$> varP <*> parens (P.sepBy expP (wsP (P.char ',')))
 
 fDefP :: Parser FDef
 fDefP = FDef <$> wsP (afterP "function" $ parens $ P.sepBy nameP (wsP (P.char ','))) <*> blockP
 
--- fDefP = FDef <$> many nameP <*> afterP "function" blockP <* stringP "end"
-
 statementP :: Parser Statement
-statementP = wsP (assignP <|> ifP <|> whileP <|> emptyP <|> repeatP)
+statementP = wsP (assignP <|> ifP <|> whileP <|> emptyP <|> repeatP <|> returnP)
   where
     assignP :: Parser Statement
     assignP = Assign <$> varP <*> (stringP "=" *> expP)
@@ -183,6 +181,8 @@ statementP = wsP (assignP <|> ifP <|> whileP <|> emptyP <|> repeatP)
     emptyP = constP ";" Empty
     repeatP :: Parser Statement
     repeatP = liftA2 Repeat (afterP "repeat" blockP) (afterP "until" expP)
+    returnP :: Parser Statement
+    returnP = Return <$> afterP "return" expP
 
 blockP :: Parser Block
 blockP = Block <$> many statementP
