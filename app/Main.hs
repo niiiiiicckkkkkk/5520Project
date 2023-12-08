@@ -5,7 +5,7 @@ import Data.Maybe (fromMaybe)
 import LuParser (parseLuExp, parseLuFile, parseStatement)
 import LuStepper
   ( Stepper (..),
-    Store (MkStr, fstore, vstore),
+    Store (MkStr, env, fstore, globalstore),
     evaluate,
     evaluateS,
     exec,
@@ -39,7 +39,8 @@ main = go initialStepper
               go (ss {filename = Just fn, thread = t})
         -- dump the store
         Just (":d", _) -> do
-          putStrLn (pretty $ vstore $ store ss)
+          putStrLn (pretty $ globalstore $ store ss)
+          putStrLn (pretty $ env $ store ss)
           go ss
         -- quit the stepper
         Just (":q", _) -> return ()

@@ -166,7 +166,7 @@ fCallP :: Parser FCall
 fCallP = FCall <$> varP <*> parens (P.sepBy expP (wsP (P.char ',')))
 
 fDefP :: Parser FDef
-fDefP = FDef <$> wsP (afterP "function" $ parens $ P.sepBy nameP (wsP (P.char ','))) <*> blockP
+fDefP = FDef <$> wsP (afterP "function" $ parens $ P.sepBy nameP (wsP (P.char ','))) <*> (blockP <* stringP "end")
 
 statementP :: Parser Statement
 statementP = wsP (assignP <|> ifP <|> whileP <|> emptyP <|> repeatP <|> returnP)

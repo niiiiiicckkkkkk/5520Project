@@ -13,20 +13,25 @@ import Test.HUnit (Counts, Test (..), runTestTT, (~:), (~?=))
 import Test.QuickCheck qualified as QC
 import Text.Read (readMaybe)
 
-data Store = MkStr {vstore :: ValueStore, fstore :: FunctionStore}
+data Store = MkStr {env :: Environment, globalstore :: Map String Value, fstore :: FunctionStore}
 
-type ValueStore = Map Value Value
+type Environment = Map String String
+
+-- type Table = Map Value Value
 
 type FunctionStore = Map Name Closure
 
-data Closure = Closure {env :: ValueStore, function :: Function}
+data Closure = Closure {fenv :: Environment, function :: Function}
 
 data Function = Function [String] Block
 
-initialStore :: Store
-initialStore = MkStr Map.empty Map.empty
+-- reference into the environment
+data Reference
+  = Ref String
+  | TableRef (String, Value)
 
-type Reference = Value
+initialStore :: Store
+initialStore = MkStr Map.empty Map.empty Map.empty
 
 {-
 tableFromState :: Name -> State Store (Maybe Table)
@@ -34,28 +39,57 @@ tableFromState tname = Map.lookup tname <$> S.get
 -}
 
 index :: Reference -> State Store Value
-index ref = do
+index (Ref r) = do
   s <- S.get
-  case Map.lookup ref (vstore s) of
-    Just val -> return val
+  case Map.lookup r (env s) of
+    Just k -> case Map.lookup k (globalstore s) of
+      Just val -> return val
+      Nothing -> error "mapping exists in env but not in globalstore"
     Nothing -> return NilVal
+index (TableRef (eref, tkey)) = error "undefined"
 
 update :: Reference -> Value -> State Store ()
-update NilVal v' = return ()
-update ref v' = do
+update (Ref eref) v' = do
   s <- S.get
-  S.modify (updateStore $ vstore s)
+  case Map.lookup eref $ env s of
+    Nothing -> do
+      let len = length $ Map.keys (globalstore s)
+      let gref = "_v" ++ show len
+      S.put (defineVar eref gref v' s)
+    Just gref -> S.put (updateVar gref v' s)
   where
-    updateStore :: ValueStore -> Store -> Store
-    updateStore env store = store {vstore = Map.insert ref v' env}
+    updateVar :: String -> Value -> Store -> Store
+    updateVar r v' s = s {globalstore = Map.insert r v' $ globalstore s}
+update (TableRef (eref, tkey)) v' = do
+  s <- S.get
+  case Map.lookup eref $ env s of
+    Nothing -> return ()
+    Just gref ->
+      case Map.lookup gref (globalstore s) of
+        Nothing -> error "mapping exists in env but not in globalstore -- table"
+        Just (Table tb) -> S.put (s {globalstore = Map.insert gref (Table (Map.insert tkey v' tb)) (globalstore s)})
+        _ -> error "idk haha"
+
+defineVar :: String -> String -> Value -> Store -> Store
+defineVar eref gref v' s =
+  s
+    { env = Map.insert eref gref $ env s,
+      globalstore = Map.insert gref v' $ globalstore s
+    }
+
+{-do
+s <- S.get
+S.put (updateVar r v' s)
+where
+  updateVar :: String -> Value -> Store -> Store
+  updateVar r v' s = s {globalstore = Map.insert r v' $ globalstore s} -}
 
 -- | Convert a variable into a reference into the store.
 -- Fails when the var is `t.x` or t[1] and `t` is not defined in the store
 -- when the var is `2.y` or `nil[2]` (i.e. not a `TableVal`)
 -- or when the var is t[nil]
 resolveVar :: Var -> State Store Reference
-resolveVar (Name n) = do
-  return $ StringVal n
+resolveVar (Name n) = return $ Ref n
 resolveVar (Dot exp n) = error "no tables"
 resolveVar (Proj exp1 exp2) = error "no tables"
 
@@ -76,30 +110,32 @@ evalE (FCallExp (FCall var argexps)) = do
     (FRef fref) ->
       let closure = Map.lookup fref (fstore s)
        in case closure of
-            Nothing -> return NilVal
+            Nothing -> error "closure didn't exist but should"
             Just cs -> do
-              setEnv (env cs) (extractArgnames . function $ cs) argexps
+              setEnv (fenv cs) (extractArgnames . function $ cs) argexps
               s' <- S.get
               let s'' = (S.execState $ evalB (extractFunction . function $ cs)) s'
               let returned = pullReturn s''
                in do
-                    S.put s
+                    S.put s {globalstore = globalstore s'', fstore = fstore s''}
                     return returned
-    _ -> return NilVal
+    _ -> error "fcall's var did not map to a function"
 evalE (FDefExp (FDef argnames block)) = do
   s <- S.get
   let len = length $ Map.keys (fstore s)
   let ref = "_f" ++ show len
-  let c = Closure {env = vstore s, function = Function argnames block}
+  let c = Closure {fenv = env s, function = Function argnames block}
    in S.put s {fstore = Map.insert ref c (fstore s)}
   return (FRef ref)
 
 -- let s' = S.execState $ evalB (extractFunction . function $ cs)
 
 pullReturn :: Store -> Value
-pullReturn store = case Map.lookup (StringVal "_return") (vstore store) of
-  Nothing -> NilVal
-  Just val -> val
+pullReturn store = case Map.lookup "_return" (env store) of
+  Nothing -> error "_return not in environment"
+  Just gref -> case Map.lookup gref (globalstore store) of
+    Just v -> v
+    Nothing -> error "_return reference not availabel in globalstore"
 
 extractFunction :: Function -> Block
 extractFunction (Function argnames block) = block
@@ -107,14 +143,35 @@ extractFunction (Function argnames block) = block
 extractArgnames :: Function -> [String]
 extractArgnames (Function argnames block) = argnames
 
-setEnv :: ValueStore -> [String] -> [Expression] -> State Store ()
-setEnv vs (n : ns) (e : es) = do
+-- old state plus evaluated args
+setEnv :: Environment -> [String] -> [Expression] -> State Store ()
+setEnv fenv (n : ns) (e : es) = do
+  s <- S.get
+  val <- evalE e
+  let len = length $ Map.keys (globalstore s)
+  let gref = "_v" ++ show len
+  S.put (defineVar n gref val s)
+setEnv fenv [] (e : es) = do
+  s <- S.get
+  S.put (s {env = fenv})
+setEnv fenv (n : ns) [] = do
+  s <- S.get
+  let len = length $ Map.keys (globalstore s)
+  let gref = "_v" ++ show len
+  S.put (defineVar n gref NilVal s)
+setEnv fenv [] [] = do
+  s <- S.get
+  S.put (s {env = fenv})
+
+{-
+do
   val <- evalE e
   update (StringVal n) val
   setEnv vs ns es
 setEnv vs [] (e : es) = return ()
 setEnv vs (n : ns) [] = update (StringVal n) NilVal
 setEnv vs [] [] = return ()
+-}
 
 -- pull out the correct block
 -- bind arguments in the new environment
@@ -186,7 +243,7 @@ evalS s@(Repeat b e) = evalS (While (Op1 Not e) b) -- keep evaluating block b un
 evalS Empty = return () -- do nothing
 evalS (Return e) = do
   v <- evalE e
-  update (StringVal "_return") v
+  update (Ref "_return") v
   return ()
 
 exec :: Thread -> Store -> (Thread, Store)

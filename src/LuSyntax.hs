@@ -58,6 +58,7 @@ data Value
   | BoolVal Bool -- false, true
   | StringVal String -- "abd"
   | TableVal Name -- <not used in source programs>
+  | Table (Map Value Value)
   | FRef Name -- index into the function store
   deriving (Eq, Show, Ord)
 
