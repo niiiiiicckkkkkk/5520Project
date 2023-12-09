@@ -15,8 +15,6 @@ import Text.Read (readMaybe)
 
 data Store = MkStr {env :: Environment, globalstore :: Map String Value, fstore :: FunctionStore}
 
-type Environment = Map String String
-
 -- type Table = Map Value Value
 
 type FunctionStore = Map Name Closure
@@ -203,8 +201,8 @@ evalOp2 Le v1 v2 = BoolVal $ v1 <= v2
 evalOp2 Concat (StringVal s1) (StringVal s2) = StringVal (s1 ++ s2)
 evalOp2 _ _ _ = NilVal
 
-evaluate :: Expression -> Store -> Value
-evaluate e = S.evalState (evalE e)
+evaluate :: Expression -> Store -> (Value, Store)
+evaluate e = S.runState (evalE e)
 
 evaluateS :: Statement -> Store -> Store
 evaluateS st = S.execState $ evalS st
@@ -244,7 +242,12 @@ evalS Empty = return () -- do nothing
 evalS (Return e) = do
   v <- evalE e
   update (Ref "_return") v
+evalS (FCallSt f@(FCall v argexps)) = do
+  evalE $ FCallExp f
   return ()
+evalS (Restore e) = do
+  s <- S.get
+  S.put s {env = e}
 
 exec :: Thread -> Store -> (Thread, Store)
 exec t@(Thread (b : bs)) s = (Thread bs, store)

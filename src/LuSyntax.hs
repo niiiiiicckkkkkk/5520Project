@@ -10,6 +10,8 @@ import Test.QuickCheck qualified as QC
 import Text.PrettyPrint (Doc, (<+>))
 import Text.PrettyPrint qualified as PP
 
+type Environment = Map String String
+
 newtype Thread = Thread [Block]
   deriving (Eq, Show)
 
@@ -36,6 +38,8 @@ data Statement
   | Empty -- ';'
   | Repeat Block Expression -- repeat s until e
   | Return Expression
+  | FCallSt FCall
+  | Restore Environment
   deriving (Eq, Show)
 
 data Expression

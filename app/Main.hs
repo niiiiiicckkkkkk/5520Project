@@ -78,13 +78,16 @@ main = go initialStepper
           case LuParser.parseStatement str of
             Right st ->
               let s' = evaluateS st (store ss)
-               in go $ ss {store = s'}
+               in do
+                    putStr "evaluated statement\n"
+                    go $ ss {store = s'}
             Left _s -> do
+              putStr "evaluated expression\n"
               case LuParser.parseLuExp str of
                 Right exp -> do
-                  let v = evaluate exp (store ss)
+                  let (v, s') = evaluate exp (store ss)
                   putStrLn (pretty v)
-                  go ss
+                  go $ ss {store = s'}
                 Left _s -> do
                   putStrLn "?"
                   go ss
