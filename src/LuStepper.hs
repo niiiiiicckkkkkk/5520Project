@@ -278,6 +278,7 @@ blockStep (Block (a@(Assign v e) : otherSs)) = do
 blockStep (Block ((Repeat b e) : otherSs)) = blockStep (Block (While (Op1 Not e) b : otherSs))
 blockStep (Block (empty : otherSs)) = return $ Block otherSs
 blockStep b@(Block []) = return b
+blockStep (Block ((FCallSt (FCall v argexps)) : bs)) = undefined
 
 -- | Evaluate this thread for a specified number of steps
 boundedStep :: Int -> Thread -> State Store Thread
