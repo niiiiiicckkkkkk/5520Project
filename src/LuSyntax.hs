@@ -231,6 +231,7 @@ instance PP Value where
   pp NilVal = PP.text "nil"
   pp (StringVal s) = PP.text ("\"" <> s <> "\"")
   pp (TableVal t) = PP.text "<" <> PP.text t <> PP.text ">"
+  pp (Table t) = PP.text "table pretty-print todo"
   pp (FRef r) = PP.text "function reference: " <> PP.text r
 
 isBase :: Expression -> Bool
@@ -265,6 +266,8 @@ instance PP Expression where
       ppPrec _ e' = pp e'
       ppParens b = if b then PP.parens else id
   pp (TableConst fs) = PP.braces (PP.sep (PP.punctuate PP.comma (map pp fs)))
+  pp (FDefExp (FDef args bk)) = PP.sep (PP.punctuate PP.comma (map pp args)) <+> pp bk
+  pp (FCallExp (FCall v args)) = pp v <+> PP.parens (PP.sep (PP.punctuate PP.comma (map pp args)))
 
 instance PP TableField where
   pp (FieldName name e) = pp name <+> PP.equals <+> pp e
@@ -291,6 +294,9 @@ instance PP Statement where
     PP.hang (PP.text "repeat") 2 (pp b)
       PP.$+$ PP.text "until"
       <+> pp e
+  pp (FCallSt e) = pp (FCallExp e)
+  pp (Return e) = PP.text "return" <+> pp e
+  pp (Restore _) = PP.text "restore"
 
 level :: Bop -> Int
 level Times = 7
@@ -436,6 +442,7 @@ instance Arbitrary Statement where
     first b
       ++ [Repeat b' e | b' <- shrink b]
       ++ [Repeat b e' | e' <- shrink e]
+  shrink _ = error "define statement shrink"
 
 -- | access the first statement in a block, if one exists
 first :: Block -> [Statement]
@@ -469,6 +476,7 @@ instance Arbitrary Expression where
       ++ [Op2 e1 o e2' | e2' <- shrink e2]
       ++ [e1, e2]
   shrink (TableConst fs) = concatMap getExp fs ++ (TableConst <$> shrink fs)
+  shrink _ = error "define expression shrink"
 
 instance Arbitrary Uop where
   arbitrary = QC.arbitraryBoundedEnum
@@ -494,3 +502,5 @@ instance Arbitrary Value where
   shrink NilVal = []
   shrink (StringVal s) = StringVal <$> shrinkStringLit s
   shrink (TableVal _) = []
+  shrink (Table _) = error "define table shrink"
+  shrink (FRef _) = error "defined FRef shrink"

@@ -141,6 +141,9 @@ extractFunction (Function argnames block) = block
 extractArgnames :: Function -> [String]
 extractArgnames (Function argnames block) = argnames
 
+extractStatements :: Block -> [Statement]
+extractStatements (Block s) = s
+
 -- old state plus evaluated args
 setEnv :: Environment -> [String] -> [Expression] -> State Store ()
 setEnv fenv (n : ns) (e : es) = do
@@ -262,6 +265,24 @@ step (Thread (b : bs)) = do
   return $ Thread (b' : bs)
 
 blockStep :: Block -> State Store Block
+blockStep (Block ((FCallSt (FCall v argexps)) : otherSs)) = do
+  s <- S.get
+  vr <- resolveVar v
+  ref <- index vr
+  case ref of
+    (FRef fref) -> do
+      case Map.lookup fref (fstore s) of
+        Nothing -> error "closure not found"
+        Just cs -> do
+          setEnv (fenv cs) (extractArgnames . function $ cs) argexps
+          let bk = extractStatements (extractFunction (function cs))
+          let rs = Restore $ env s
+          return $ Block (bk ++ [rs] ++ otherSs)
+    _ -> error "function not found"
+blockStep (Block ((Restore ev) : otherSs)) = do
+  s <- S.get
+  S.put (s {env = ev})
+  blockStep (Block otherSs)
 blockStep (Block ((If e (Block ss1) (Block ss2)) : otherSs)) = do
   v <- evalE e
   if toBool v
@@ -278,7 +299,6 @@ blockStep (Block (a@(Assign v e) : otherSs)) = do
 blockStep (Block ((Repeat b e) : otherSs)) = blockStep (Block (While (Op1 Not e) b : otherSs))
 blockStep (Block (empty : otherSs)) = return $ Block otherSs
 blockStep b@(Block []) = return b
-blockStep (Block ((FCallSt (FCall v argexps)) : bs)) = undefined
 
 -- | Evaluate this thread for a specified number of steps
 boundedStep :: Int -> Thread -> State Store Thread
