@@ -133,7 +133,7 @@ pullReturn store = case Map.lookup "_return" (env store) of
   Nothing -> error "_return not in environment"
   Just gref -> case Map.lookup gref (globalstore store) of
     Just v -> v
-    Nothing -> error "_return reference not availabel in globalstore"
+    Nothing -> error "_return reference not available in globalstore"
 
 extractFunction :: Function -> Block
 extractFunction (Function argnames block) = block
@@ -217,9 +217,8 @@ toBool (BoolVal False) = False
 toBool NilVal = False
 toBool _ = True
 
-eval :: Thread -> State Store ()
-eval (Thread (Block ss : bs)) = mapM_ evalS ss
-eval _ = mapM_ evalS []
+eval :: Block -> State Store ()
+eval (Block ss) = mapM_ evalS ss
 
 evalB :: Block -> State Store ()
 evalB (Block ss) = mapM_ evalS ss
@@ -252,20 +251,11 @@ evalS (Restore e) = do
   s <- S.get
   S.put s {env = e}
 
-exec :: Thread -> Store -> (Thread, Store)
-exec t@(Thread (b : bs)) s = (Thread bs, store)
-  where
-    store = S.execState (eval t) s
-exec (Thread []) s = (Thread [], s)
+exec :: Block -> Store -> Store
+exec = S.execState . eval
 
-step :: Thread -> State Store Thread
-step (Thread []) = return $ Thread []
-step (Thread (b : bs)) = do
-  b' <- blockStep b
-  return $ Thread (b' : bs)
-
-blockStep :: Block -> State Store Block
-blockStep (Block ((FCallSt (FCall v argexps)) : otherSs)) = do
+step :: Block -> State Store Block
+step (Block ((FCallSt (FCall v argexps)) : otherSs)) = do
   s <- S.get
   vr <- resolveVar v
   ref <- index vr
@@ -279,55 +269,48 @@ blockStep (Block ((FCallSt (FCall v argexps)) : otherSs)) = do
           let rs = Restore $ env s
           return $ Block (bk ++ [rs] ++ otherSs)
     _ -> error "function not found"
-blockStep (Block ((Restore ev) : otherSs)) = do
+step (Block ((Restore ev) : otherSs)) = do
   s <- S.get
   S.put (s {env = ev})
-  blockStep (Block otherSs)
-blockStep (Block ((If e (Block ss1) (Block ss2)) : otherSs)) = do
+  step (Block otherSs)
+step (Block ((If e (Block ss1) (Block ss2)) : otherSs)) = do
   v <- evalE e
   if toBool v
     then return $ Block (ss1 ++ otherSs)
     else return $ Block (ss2 ++ otherSs)
-blockStep (Block (w@(While e (Block ss)) : otherSs)) = do
+step (Block (w@(While e (Block ss)) : otherSs)) = do
   v <- evalE e
   if toBool v
     then return $ Block (ss ++ [w] ++ otherSs)
     else return $ Block otherSs
-blockStep (Block (a@(Assign v e) : otherSs)) = do
+step (Block (a@(Assign v e) : otherSs)) = do
   s' <- evalS a
   return $ Block otherSs
-blockStep (Block ((Repeat b e) : otherSs)) = blockStep (Block (While (Op1 Not e) b : otherSs))
-blockStep (Block (empty : otherSs)) = return $ Block otherSs
-blockStep b@(Block []) = return b
+step (Block ((Repeat b e) : otherSs)) = step (Block (While (Op1 Not e) b : otherSs))
+step (Block (empty : otherSs)) = return $ Block otherSs
+step b@(Block []) = return b
 
 -- | Evaluate this thread for a specified number of steps
-boundedStep :: Int -> Thread -> State Store Thread
-boundedStep 0 t = return t
-boundedStep _ t | threadFinal t = return t
-boundedStep n t = step t >>= boundedStep (n - 1)
+boundedStep :: Int -> Block -> State Store Block
+boundedStep 0 b = return b
+boundedStep _ b | blockFinal b = return b
+boundedStep n b = step b >>= boundedStep (n - 1)
 
 -- | Evaluate this thread for a specified number of steps, using the specified store
-steps :: Int -> Thread -> Store -> (Thread, Store)
-steps n thread = S.runState (boundedStep n thread)
+steps :: Int -> Block -> Store -> (Block, Store)
+steps n block = S.runState (boundedStep n block)
 
 -- | Is this block completely evaluated?
 blockFinal :: Block -> Bool
 blockFinal (Block []) = True
 blockFinal _ = False
 
-threadFinal :: Thread -> Bool
-threadFinal (Thread []) = True
-threadFinal _ = False
-
 allStep :: Block -> State Store Block
 allStep b | blockFinal b = return b
-allStep b = blockStep b >>= allStep
+allStep b = step b >>= allStep
 
-execBlock :: Thread -> State Store Thread
-execBlock (Thread (b : bs)) = do
-  allStep b
-  return $ Thread bs
-execBlock t@(Thread []) = return t
+execStep :: Block -> Store -> Store
+execStep b = S.execState (allStep b)
 
 -- | Evaluate this thread to completion
 
@@ -336,7 +319,7 @@ execBlock t@(Thread []) = return t
 
 data Stepper = Stepper
   { filename :: Maybe String,
-    thread :: Thread,
+    block :: Block,
     store :: Store,
     history :: Maybe Stepper
   }
@@ -345,15 +328,15 @@ initialStepper :: Stepper
 initialStepper =
   Stepper
     { filename = Nothing,
-      thread = mempty,
+      block = mempty,
       store = initialStore,
       history = Nothing
     }
 
 stepForward :: Stepper -> Stepper
 stepForward ss =
-  let (thread', store') = steps 1 (thread ss) (store ss)
-   in ss {thread = thread', store = store', history = Just ss}
+  let (block', store') = steps 1 (block ss) (store ss)
+   in ss {block = block', store = store', history = Just ss}
 
 stepForwardN :: Stepper -> Int -> Stepper
 stepForwardN ss 0 = ss
