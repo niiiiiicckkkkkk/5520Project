@@ -1,14 +1,15 @@
 module LuStepper where
 
 import Control.Monad (when)
+import Control.Monad.State (StateT)
+import Control.Monad.State qualified as S
+import Control.Monad.Trans (lift)
 import Data.List qualified as List
 import Data.Map (Map, (!?))
 import Data.Map qualified as Map
 import Data.Maybe (fromMaybe)
 import LuParser qualified
 import LuSyntax
-import State (State)
-import State qualified as S
 import Test.HUnit (Counts, Test (..), runTestTT, (~:), (~?=))
 import Test.QuickCheck qualified as QC
 import Text.Read (readMaybe)
@@ -36,9 +37,10 @@ tableFromState :: Name -> State Store (Maybe Table)
 tableFromState tname = Map.lookup tname <$> S.get
 -}
 
-index :: Reference -> State Store Value
+index :: Reference -> StateT Store IO Value
 index (Ref r) = do
   s <- S.get
+  -- lift $ putStrLn "in index"
   case Map.lookup r (env s) of
     Just k -> case Map.lookup k (globalstore s) of
       Just val -> return val
@@ -46,7 +48,7 @@ index (Ref r) = do
     Nothing -> return NilVal
 index (TableRef (eref, tkey)) = error "undefined"
 
-update :: Reference -> Value -> State Store ()
+update :: Reference -> Value -> StateT Store IO ()
 update (Ref eref) v' = do
   s <- S.get
   case Map.lookup eref $ env s of
@@ -75,24 +77,17 @@ defineVar eref gref v' s =
       globalstore = Map.insert gref v' $ globalstore s
     }
 
-{-do
-s <- S.get
-S.put (updateVar r v' s)
-where
-  updateVar :: String -> Value -> Store -> Store
-  updateVar r v' s = s {globalstore = Map.insert r v' $ globalstore s} -}
-
 -- | Convert a variable into a reference into the store.
 -- Fails when the var is `t.x` or t[1] and `t` is not defined in the store
 -- when the var is `2.y` or `nil[2]` (i.e. not a `TableVal`)
 -- or when the var is t[nil]
-resolveVar :: Var -> State Store Reference
+resolveVar :: Var -> StateT Store IO Reference
 resolveVar (Name n) = return $ Ref n
 resolveVar (Dot exp n) = error "no tables"
 resolveVar (Proj exp1 exp2) = error "no tables"
 
 -- | Expression evaluator
-evalE :: Expression -> State Store Value
+evalE :: Expression -> StateT Store IO Value
 evalE (Var v) = do
   ref <- resolveVar v -- see above
   index ref
@@ -103,21 +98,14 @@ evalE (TableConst _fs) = error "no tables"
 evalE (FCallExp (FCall var argexps)) = do
   s <- S.get
   r <- resolveVar var
-  ref <- index r
-  case ref of
-    (FRef fref) ->
-      let closure = Map.lookup fref (fstore s)
-       in case closure of
-            Nothing -> error "closure didn't exist but should"
-            Just cs -> do
-              setEnv (fenv cs) (extractArgnames . function $ cs) argexps
-              s' <- S.get
-              let s'' = (S.execState $ evalB (extractFunction . function $ cs)) s'
-              let returned = pullReturn s''
-               in do
-                    S.put s {globalstore = globalstore s'', fstore = fstore s''}
-                    return returned
-    _ -> error "fcall's var did not map to a function"
+  v <- index r
+  case v of
+    FRef ref -> case Map.lookup ref (fstore s) of
+      Just cl -> S.StateT $ fStTransformer cl argexps
+      Nothing -> return NilVal
+    _ -> return NilVal
+
+-- S.StateT $ fStTransformer ref argexps
 evalE (FDefExp (FDef argnames block)) = do
   s <- S.get
   let len = length $ Map.keys (fstore s)
@@ -126,7 +114,27 @@ evalE (FDefExp (FDef argnames block)) = do
    in S.put s {fstore = Map.insert ref c (fstore s)}
   return (FRef ref)
 
--- let s' = S.execState $ evalB (extractFunction . function $ cs)
+fStTransformer :: Closure -> [Expression] -> Store -> IO (Value, Store)
+fStTransformer cl exps s = do
+  (oldStore, fStore) <- evalArgs exps (extractArgnames $ function cl) s s {env = fenv cl}
+  (_, fStore') <- (S.runStateT $ evalB (extractFunction $ function cl)) fStore
+  case Map.lookup "_return" (env fStore') of
+    Nothing -> return (NilVal, oldStore)
+    Just gref -> case Map.lookup gref (globalstore fStore') of
+      Just v -> return (v, oldStore)
+      Nothing -> error "what the heck just happend"
+
+evalArgs :: [Expression] -> [String] -> Store -> Store -> IO (Store, Store)
+evalArgs (e : es) (n : ns) oldStr fStr = do
+  (val, oldStr') <- (S.runStateT $ evalE e) oldStr
+  (_, fStr') <- (S.runStateT $ update (Ref n) val) fStr
+  evalArgs es ns oldStr' fStr'
+evalArgs (e : es) [] oldStr fStr = do
+  evalArgs es [] oldStr fStr
+evalArgs [] (n : ns) oldStr fStr = do
+  (_, fStr') <- (S.runStateT $ update (Ref n) NilVal) fStr
+  evalArgs [] ns oldStr fStr'
+evalArgs [] [] oldStr fStr = return (oldStr, fStr)
 
 pullReturn :: Store -> Value
 pullReturn store = case Map.lookup "_return" (env store) of
@@ -145,7 +153,7 @@ extractStatements :: Block -> [Statement]
 extractStatements (Block s) = s
 
 -- old state plus evaluated args
-setEnv :: Environment -> [String] -> [Expression] -> State Store ()
+setEnv :: Environment -> [String] -> [Expression] -> StateT Store IO ()
 setEnv fenv (n : ns) (e : es) = do
   s <- S.get
   val <- evalE e
@@ -163,20 +171,6 @@ setEnv fenv (n : ns) [] = do
 setEnv fenv [] [] = do
   s <- S.get
   S.put (s {env = fenv})
-
-{-
-do
-  val <- evalE e
-  update (StringVal n) val
-  setEnv vs ns es
-setEnv vs [] (e : es) = return ()
-setEnv vs (n : ns) [] = update (StringVal n) NilVal
-setEnv vs [] [] = return ()
--}
-
--- pull out the correct block
--- bind arguments in the new environment
--- return the resulting value
 
 evalOp1 :: Uop -> Value -> Value
 evalOp1 Neg (IntVal v) = IntVal $ negate v
@@ -204,11 +198,11 @@ evalOp2 Le v1 v2 = BoolVal $ v1 <= v2
 evalOp2 Concat (StringVal s1) (StringVal s2) = StringVal (s1 ++ s2)
 evalOp2 _ _ _ = NilVal
 
-evaluate :: Expression -> Store -> (Value, Store)
-evaluate e = S.runState (evalE e)
+evaluate :: Expression -> Store -> IO (Value, Store)
+evaluate e = S.runStateT (evalE e)
 
-evaluateS :: Statement -> Store -> Store
-evaluateS st = S.execState $ evalS st
+evaluateS :: Statement -> Store -> IO Store
+evaluateS st = S.execStateT $ evalS st
 
 -- | Determine whether a value should be interpreted as true or false when
 -- used as a condition.
@@ -217,14 +211,14 @@ toBool (BoolVal False) = False
 toBool NilVal = False
 toBool _ = True
 
-eval :: Block -> State Store ()
+eval :: Block -> StateT Store IO ()
 eval (Block ss) = mapM_ evalS ss
 
-evalB :: Block -> State Store ()
+evalB :: Block -> StateT Store IO ()
 evalB (Block ss) = mapM_ evalS ss
 
 -- | Statement evaluator
-evalS :: Statement -> State Store ()
+evalS :: Statement -> StateT Store IO ()
 evalS (If e b1 b2) = do
   v <- evalE e
   if toBool v then evalB b1 else evalB b2
@@ -251,11 +245,13 @@ evalS (Restore e) = do
   s <- S.get
   S.put s {env = e}
 
-exec :: Block -> Store -> Store
-exec = S.execState . eval
+exec :: Block -> Store -> IO Store
+exec = S.execStateT . eval
 
-step :: Block -> State Store Block
+step :: Block -> StateT Store IO Block
 step (Block ((FCallSt (FCall v argexps)) : otherSs)) = do
+  b <- lift promptYN
+  if b then lift $ putStrLn "user said yes" else lift $ putStrLn "user said no"
   s <- S.get
   vr <- resolveVar v
   ref <- index vr
@@ -291,26 +287,26 @@ step (Block (empty : otherSs)) = return $ Block otherSs
 step b@(Block []) = return b
 
 -- | Evaluate this thread for a specified number of steps
-boundedStep :: Int -> Block -> State Store Block
+boundedStep :: Int -> Block -> StateT Store IO Block
 boundedStep 0 b = return b
 boundedStep _ b | blockFinal b = return b
 boundedStep n b = step b >>= boundedStep (n - 1)
 
 -- | Evaluate this thread for a specified number of steps, using the specified store
-steps :: Int -> Block -> Store -> (Block, Store)
-steps n block = S.runState (boundedStep n block)
+steps :: Int -> Block -> Store -> IO (Block, Store)
+steps n block = S.runStateT (boundedStep n block)
 
 -- | Is this block completely evaluated?
 blockFinal :: Block -> Bool
 blockFinal (Block []) = True
 blockFinal _ = False
 
-allStep :: Block -> State Store Block
+allStep :: Block -> StateT Store IO Block
 allStep b | blockFinal b = return b
 allStep b = step b >>= allStep
 
-execStep :: Block -> Store -> Store
-execStep b = S.execState (allStep b)
+execStep :: Block -> Store -> IO Store
+execStep b = S.execStateT (allStep b)
 
 -- | Evaluate this thread to completion
 
@@ -333,16 +329,21 @@ initialStepper =
       history = Nothing
     }
 
-stepForward :: Stepper -> Stepper
-stepForward ss =
-  let (block', store') = steps 1 (block ss) (store ss)
-   in ss {block = block', store = store', history = Just ss}
+stepForward :: Stepper -> IO Stepper
+stepForward ss = do
+  (blk, str) <- steps 1 (block ss) (store ss)
+  return ss {block = blk, store = str, history = Just ss}
 
-stepForwardN :: Stepper -> Int -> Stepper
-stepForwardN ss 0 = ss
-stepForwardN ss n =
-  let nextStepper = stepForward ss
-   in stepForwardN nextStepper (n - 1)
+{-
+  let (block', store') = steps 1 (block ss) (store ss)
+   in do
+    ss {block = block', store = store', history = Just ss}-}
+
+stepForwardN :: Stepper -> Int -> IO Stepper
+stepForwardN ss 0 = pure ss
+stepForwardN ss n = do
+  nextStepper <- stepForward ss
+  stepForwardN nextStepper (n - 1)
 
 stepBackward :: Stepper -> Maybe Stepper
 stepBackward = history
@@ -354,3 +355,11 @@ stepBackwardN ss n =
    in case prevStepper of
         Just ss' -> stepBackwardN ss' (n - 1)
         _ -> Nothing
+
+promptYN :: IO Bool
+promptYN = do
+  putStrLn "step in? (y/n)"
+  str <- getLine
+  case str of
+    ('y' : ss) -> return True
+    _ -> return False

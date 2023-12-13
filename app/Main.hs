@@ -45,17 +45,18 @@ main = go initialStepper
         -- quit the stepper
         Just (":q", _) -> return ()
         -- run current block to completion
-        Just (":r", _) ->
-          let s' = exec (block ss) (store ss)
-           in go ss {block = mempty, store = s', history = Just ss}
+        Just (":r", _) -> do
+          s' <- exec (block ss) (store ss)
+          go ss {block = mempty, store = s', history = Just ss}
         -- next statement (could be multiple)
         Just (":n", strs) -> do
           let numSteps :: Int
               numSteps = case readMaybe (concat strs) of
                 Just x -> x
                 Nothing -> 1
-          let newStepper = stepForwardN ss numSteps
-          go newStepper
+           in do
+                newStepper <- stepForwardN ss numSteps
+                go newStepper
         -- previous statement
         -- NOTE: this should revert steps of the evaluator not
         -- commands to the stepper. With :n 5 followed by :p
@@ -76,16 +77,15 @@ main = go initialStepper
         -- evaluate an expression in the current state
         _ ->
           case LuParser.parseStatement str of
-            Right st ->
-              let s' = evaluateS st (store ss)
-               in do
-                    -- putStr "evaluated statement\n"
-                    go $ ss {store = s'}
+            Right st -> do
+              s' <- evaluateS st (store ss)
+              -- putStr "evaluated statement\n"
+              go $ ss {store = s'}
             Left _s -> do
               -- putStr "evaluated expression\n"
               case LuParser.parseLuExp str of
                 Right exp -> do
-                  let (v, s') = evaluate exp (store ss)
+                  (v, s') <- evaluate exp (store ss)
                   putStrLn (pretty v)
                   go $ ss {store = s'}
                 Left _s -> do
