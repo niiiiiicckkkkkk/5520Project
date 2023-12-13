@@ -14,7 +14,7 @@ import Test.HUnit (Counts, Test (..), runTestTT, (~:), (~?=))
 import Test.QuickCheck qualified as QC
 import Text.Read (readMaybe)
 
-data Store = MkStr {env :: Environment, globalstore :: Map String Value, fstore :: FunctionStore}
+data Store = MkStr {env :: Environment, globalstore :: Map String Value, fstore :: FunctionStore, block :: Block}
 
 -- type Table = Map Value Value
 
@@ -30,7 +30,7 @@ data Reference
   | TableRef (String, Value)
 
 initialStore :: Store
-initialStore = MkStr Map.empty Map.empty Map.empty
+initialStore = MkStr Map.empty Map.empty Map.empty mempty
 
 {-
 tableFromState :: Name -> State Store (Maybe Table)
@@ -315,7 +315,6 @@ execStep b = S.execStateT (allStep b)
 
 data Stepper = Stepper
   { filename :: Maybe String,
-    block :: Block,
     store :: Store,
     history :: Maybe Stepper
   }
@@ -324,15 +323,14 @@ initialStepper :: Stepper
 initialStepper =
   Stepper
     { filename = Nothing,
-      block = mempty,
       store = initialStore,
       history = Nothing
     }
 
 stepForward :: Stepper -> IO Stepper
 stepForward ss = do
-  (blk, str) <- steps 1 (block ss) (store ss)
-  return ss {block = blk, store = str, history = Just ss}
+  (blk, str) <- steps 1 (block (store ss)) (store ss)
+  return ss {store = str {block = blk}, history = Just ss}
 
 {-
   let (block', store') = steps 1 (block ss) (store ss)

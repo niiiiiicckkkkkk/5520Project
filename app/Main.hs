@@ -5,7 +5,7 @@ import Data.Maybe (fromMaybe)
 import LuParser (parseLuExp, parseLuFile, parseStatement)
 import LuStepper
   ( Stepper (..),
-    Store (MkStr, env, fstore, globalstore),
+    Store (MkStr, env, fstore, globalstore, block),
     evaluate,
     evaluateS,
     exec,
@@ -36,7 +36,7 @@ main = go initialStepper
               go ss
             (Right b) -> do
               putStr ("Loaded " ++ fn ++ ", initializing stepper\n")
-              go (ss {filename = Just fn, block = b})
+              go (ss {filename = Just fn, store = (store ss) {block = b} })
         -- dump the store
         Just (":d", _) -> do
           putStrLn (pretty $ globalstore $ store ss)
@@ -46,8 +46,8 @@ main = go initialStepper
         Just (":q", _) -> return ()
         -- run current block to completion
         Just (":r", _) -> do
-          s' <- exec (block ss) (store ss)
-          go ss {block = mempty, store = s', history = Just ss}
+          s' <- exec (block (store ss)) (store ss)
+          go ss {store = s' {block = mempty}, history = Just ss}
         -- next statement (could be multiple)
         Just (":n", strs) -> do
           let numSteps :: Int
@@ -92,6 +92,6 @@ main = go initialStepper
                   putStrLn "?"
                   go ss
     prompt :: Stepper -> IO ()
-    prompt Stepper {block = Block []} = return ()
-    prompt Stepper {block = Block (s : _)} =
-      putStr "--> " >> putStrLn (pretty s)
+    prompt s = case block (store s) of
+      Block [] -> return ()
+      Block (s : _) -> putStr "--> " >> putStrLn (pretty s)
