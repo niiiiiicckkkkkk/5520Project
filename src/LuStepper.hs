@@ -121,7 +121,7 @@ fStTransformer cl exps s = do
   case Map.lookup "_return" (env fStore') of
     Nothing -> return (NilVal, oldStore)
     Just gref -> case Map.lookup gref (globalstore fStore') of
-      Just v -> return (v, oldStore)
+      Just v -> return (v, oldStore {globalstore = globalstore fStore', fstore = fstore fStore'})
       Nothing -> error "what the heck just happend"
 
 evalArgs :: [Expression] -> [String] -> Store -> Store -> IO (Store, Store)
