@@ -1,15 +1,16 @@
 module Main where
 
+import Control.Monad.State (StateT, evalStateT, runStateT)
 import Data.List qualified as List
 import Data.Maybe (fromMaybe)
 import LuParser (parseLuExp, parseLuFile, parseStatement)
 import LuStepper
-  ( Stepper (..),
-    Store (MkStr, env, fstore, globalstore, block),
+  ( Store (MkStr, block, env, fstore, globalstore),
     evaluate,
     evaluateS,
     exec,
-    initialStepper,
+    go,
+    initialStore,
     stepBackwardN,
     stepForwardN,
   )
@@ -18,7 +19,11 @@ import System.IO (BufferMode (NoBuffering), hSetBuffering, stdout)
 import Text.Read (readMaybe)
 
 main :: IO ()
-main = go initialStepper
+main = do
+  hSetBuffering stdout NoBuffering
+  evalStateT (go initialStore) initialStore
+
+{-
   where
     go :: Stepper -> IO ()
     go ss = do
@@ -95,3 +100,4 @@ main = go initialStepper
     prompt s = case block (store s) of
       Block [] -> return ()
       Block (s : _) -> putStr "--> " >> putStrLn (pretty s)
+-}

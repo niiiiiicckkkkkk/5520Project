@@ -39,7 +39,6 @@ data Statement
   | Repeat Block Expression -- repeat s until e
   | Return Expression
   | FCallSt FCall
-  | Restore Environment
   deriving (Eq, Show)
 
 data Expression
@@ -296,7 +295,6 @@ instance PP Statement where
       <+> pp e
   pp (FCallSt e) = pp (FCallExp e)
   pp (Return e) = PP.text "return" <+> pp e
-  pp (Restore _) = PP.text "restore"
 
 level :: Bop -> Int
 level Times = 7

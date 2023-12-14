@@ -1,8 +1,0 @@
-x = 10
-fact = function(n, f)
-    while n > 0 do x = n z = f 
-        while x > 1 do  f = z + f x = x - 1 end 
-        n = n - 1 end 
-    return f end
-x = fact(x, 1)
-fact(5, 1)

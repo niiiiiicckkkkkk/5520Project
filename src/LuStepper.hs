@@ -14,7 +14,16 @@ import Test.HUnit (Counts, Test (..), runTestTT, (~:), (~?=))
 import Test.QuickCheck qualified as QC
 import Text.Read (readMaybe)
 
-data Store = MkStr {env :: Environment, globalstore :: Map String Value, fstore :: FunctionStore, block :: Block}
+data Store = MkStr
+  { env :: Environment,
+    globalstore :: Map String Value,
+    fstore :: FunctionStore,
+    block :: Block,
+    history :: Store,
+    filename :: String
+  }
+
+initialStore :: Store = MkStr Map.empty Map.empty Map.empty mempty initialStore ""
 
 -- type Table = Map Value Value
 
@@ -28,9 +37,6 @@ data Function = Function [String] Block
 data Reference
   = Ref String
   | TableRef (String, Value)
-
-initialStore :: Store
-initialStore = MkStr Map.empty Map.empty Map.empty mempty
 
 {-
 tableFromState :: Name -> State Store (Maybe Table)
@@ -254,14 +260,12 @@ evalS (Return e) = do
 evalS (FCallSt f@(FCall v argexps)) = do
   evalE $ FCallExp f
   return ()
-evalS (Restore e) = do
-  s <- S.get
-  S.put s {env = e}
 
 exec :: Block -> Store -> IO Store
 exec = S.execStateT . eval
 
-step :: Block -> StateT Store IO Block
+-- block to store (state after one statement)
+step :: Block -> StateT Store IO ()
 step (Block ((FCallSt (FCall v argexps)) : otherSs)) = do
   s <- S.get
   vr <- resolveVar v
@@ -273,104 +277,87 @@ step (Block ((FCallSt (FCall v argexps)) : otherSs)) = do
         Nothing -> error "closure not found"
         Just cs -> do
           fstr <- setEnv (extractArgnames . function $ cs) argexps s {env = fenv cs}
-          S.put fstr
           let bk = extractStatements (extractFunction (function cs))
-          let rs = Restore $ env s
           if stepin
-            then return $ Block (bk ++ [rs] ++ otherSs)
+            then go fstr {block = Block bk}
             else do
               evalB $ extractFunction (function cs)
-              S.put s
-              return (Block otherSs)
+              S.put s {block = Block otherSs}
     _ -> error "function not found"
-step (Block ((Restore ev) : otherSs)) = do
-  s <- S.get
-  S.put (s {env = ev})
-  step (Block otherSs)
 step (Block ((If e (Block ss1) (Block ss2)) : otherSs)) = do
   v <- evalE e
+  s <- S.get
   if toBool v
-    then return $ Block (ss1 ++ otherSs)
-    else return $ Block (ss2 ++ otherSs)
+    then S.put s {block = Block (ss1 ++ otherSs)}
+    else S.put s {block = Block (ss2 ++ otherSs)}
 step (Block (w@(While e (Block ss)) : otherSs)) = do
+  s <- S.get
   v <- evalE e
   if toBool v
-    then return $ Block (ss ++ [w] ++ otherSs)
-    else return $ Block otherSs
+    then S.put s {block = Block (ss ++ [w] ++ otherSs)}
+    else S.put s {block = Block otherSs}
 step (Block (a@(Assign v e) : otherSs)) = do
-  s' <- evalS a
-  return $ Block otherSs
+  lift $ putStrLn "assignment"
+  evalS a
+  s <- S.get
+  S.put s {block = Block otherSs}
 step (Block ((Repeat b e) : otherSs)) = step (Block (While (Op1 Not e) b : otherSs))
-step (Block (empty : otherSs)) = return $ Block otherSs
-step b@(Block []) = return b
+step (Block (empty : otherSs)) = do
+  s <- S.get
+  S.put s {block = Block otherSs}
+step b@(Block []) = do
+  s <- S.get
+  S.put s {block = Block []}
 
 -- | Evaluate this thread for a specified number of steps
-boundedStep :: Int -> Block -> StateT Store IO Block
-boundedStep 0 b = return b
-boundedStep _ b | blockFinal b = return b
-boundedStep n b = step b >>= boundedStep (n - 1)
+-- boundedStep :: Int -> Block -> StateT Store IO Block
+-- boundedStep 0 b = return b
+-- boundedStep _ b | blockFinal b = return b
+-- boundedStep n b = step b >>= boundedStep (n - 1)
 
 -- | Evaluate this thread for a specified number of steps, using the specified store
-steps :: Int -> Block -> Store -> IO (Block, Store)
-steps n block = S.runStateT (boundedStep n block)
+-- steps :: Int -> Block -> Store -> IO (Block, Store)
+-- steps n block = S.runStateT (boundedStep n block)
 
 -- | Is this block completely evaluated?
-blockFinal :: Block -> Bool
-blockFinal (Block []) = True
-blockFinal _ = False
+-- blockFinal :: Block -> Bool
+-- blockFinal (Block []) = True
+-- blockFinal _ = False
 
-allStep :: Block -> StateT Store IO Block
-allStep b | blockFinal b = return b
-allStep b = step b >>= allStep
+-- allStep :: Block -> StateT Store IO Block
+-- allStep b | blockFinal b = return b
+-- allStep b = step b >>= allStep
 
-execStep :: Block -> Store -> IO Store
-execStep b = S.execStateT (allStep b)
+-- execStep :: Block -> Store -> IO Store
+-- execStep b = S.execStateT (allStep b)
 
--- | Evaluate this thread to completion
-
--- execThread :: Thread -> Store -> Store
--- execThread t = S.execState (allStep t)
-
-data Stepper = Stepper
-  { filename :: Maybe String,
-    store :: Store,
-    history :: Maybe Stepper
-  }
-
-initialStepper :: Stepper
-initialStepper =
-  Stepper
-    { filename = Nothing,
-      store = initialStore,
-      history = Nothing
-    }
-
-stepForward :: Stepper -> IO Stepper
-stepForward ss = do
-  (blk, str) <- steps 1 (block (store ss)) (store ss)
-  return ss {store = str {block = blk}, history = Just ss}
+stepForward :: StateT Store IO ()
+stepForward = do
+  s <- S.get
+  step $ block s
 
 {-
   let (block', store') = steps 1 (block ss) (store ss)
    in do
     ss {block = block', store = store', history = Just ss}-}
 
-stepForwardN :: Stepper -> Int -> IO Stepper
-stepForwardN ss 0 = pure ss
-stepForwardN ss n = do
-  nextStepper <- stepForward ss
-  stepForwardN nextStepper (n - 1)
+stepForwardN :: Int -> StateT Store IO ()
+stepForwardN 0 = return ()
+stepForwardN n = do
+  s <- S.get
+  stepForward
+  stepForwardN (n - 1)
 
-stepBackward :: Stepper -> Maybe Stepper
-stepBackward = history
+stepBackward :: StateT Store IO ()
+stepBackward = do
+  s <- S.get
+  S.put $ history s
 
-stepBackwardN :: Stepper -> Int -> Maybe Stepper
-stepBackwardN ss 0 = Just ss
-stepBackwardN ss n =
-  let prevStepper = stepBackward ss
-   in case prevStepper of
-        Just ss' -> stepBackwardN ss' (n - 1)
-        _ -> Nothing
+stepBackwardN :: Int -> StateT Store IO ()
+stepBackwardN 0 = return ()
+stepBackwardN n = do
+  stepBackward
+  stepBackwardN (n - 1)
 
 promptYN :: IO Bool
 promptYN = do
@@ -379,3 +366,80 @@ promptYN = do
   case str of
     ('y' : ss) -> return True
     _ -> return False
+
+go :: Store -> StateT Store IO ()
+go st = do
+  S.put st
+  lift $ prompt st
+  lift $ putStr ("Lu " ++ filename st ++ "> ")
+  str <- lift getLine
+  case List.uncons (words str) of
+    -- load a file for stepping
+    Just (":l", [fn]) -> do
+      parseResult <- lift $ LuParser.parseLuFile fn
+      case parseResult of
+        (Left _) -> do
+          lift $ putStr "Failed to parse file"
+          go st
+        (Right b) -> do
+          lift $ putStr ("Loaded " ++ fn ++ ", initializing stepper\n")
+          go st {filename = fn, block = b}
+    -- dump the store
+    Just (":d", _) -> do
+      lift $ putStrLn (pretty $ globalstore st)
+      lift $ putStrLn (pretty $ env st)
+      go st
+    -- quit the stepper
+    Just (":q", _) -> return ()
+    -- run current block to completion
+    Just (":r", _) -> do
+      evalB $ block st
+      s' <- S.get
+      go s'
+    -- next statement (could be multiple)
+    Just (":n", strs) -> do
+      let numSteps :: Int
+          numSteps = case readMaybe (concat strs) of
+            Just x -> x
+            Nothing -> 1
+       in do
+            stepForwardN numSteps
+            newStore <- S.get
+            go newStore
+    -- previous statement
+    -- NOTE: this should revert steps of the evaluator not
+    -- commands to the stepper. With :n 5 followed by :p
+    -- it should back up a single statement, not five statements.
+    Just (":p", strs) -> do
+      let numSteps :: Int
+          numSteps = case readMaybe (concat strs) of
+            Just x -> x
+            Nothing -> 1
+
+      stepBackwardN numSteps
+      s' <- S.get
+      go s'
+    -- evaluate an expression in the current state
+    _ ->
+      case LuParser.parseStatement str of
+        Right stmt -> do
+          evalS stmt
+          s' <- S.get
+          -- putStr "evaluated statement\n"
+          go s'
+        Left _s -> do
+          -- putStr "evaluated expression\n"
+          case LuParser.parseLuExp str of
+            Right exp -> do
+              v <- evalE exp
+              s' <- S.get
+              lift $ putStrLn (pretty v)
+              go s'
+            Left _s -> do
+              lift $ putStrLn "?"
+              go st
+
+prompt :: Store -> IO ()
+prompt st = case block st of
+  Block [] -> return ()
+  Block (s : _) -> putStr "--> " >> putStrLn (pretty s)
