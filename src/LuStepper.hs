@@ -87,7 +87,7 @@ resolveVar (Dot exp n) = error "no tables"
 resolveVar (Proj exp1 exp2) = error "no tables"
 
 -- | Expression evaluator
-evalE :: Expression -> StateT Store IO Value
+evalE :: Expression -> StateT Store IO (Value)
 evalE (Var v) = do
   ref <- resolveVar v -- see above
   index ref
@@ -98,12 +98,23 @@ evalE (TableConst _fs) = error "no tables"
 evalE (FCallExp (FCall var argexps)) = do
   s <- S.get
   r <- resolveVar var
-  v <- index r
-  case v of
-    FRef ref -> case Map.lookup ref (fstore s) of
-      Just cl -> S.StateT $ fStTransformer cl argexps
-      Nothing -> return NilVal
-    _ -> return NilVal
+  ref <- index r
+  case ref of
+    (FRef fref) ->
+      let closure = Map.lookup fref (fstore s)
+       in case closure of
+            Nothing -> error "closure didn't exist but should"
+            Just cs -> do
+              lift $ putStrLn "evaluating function"
+              fstr <- setEnv (extractArgnames . function $ cs) argexps s {env = fenv cs}
+              S.put fstr
+              evalB (extractFunction . function $ cs)
+              s' <- S.get
+              let returned = pullReturn s'
+               in do
+                    S.put s {globalstore = globalstore s', fstore = fstore s'}
+                    return returned
+    _ -> error "fcall's var did not map to a function"
 
 -- S.StateT $ fStTransformer ref argexps
 evalE (FDefExp (FDef argnames block)) = do
@@ -114,6 +125,7 @@ evalE (FDefExp (FDef argnames block)) = do
    in S.put s {fstore = Map.insert ref c (fstore s)}
   return (FRef ref)
 
+{-
 fStTransformer :: Closure -> [Expression] -> Store -> IO (Value, Store)
 fStTransformer cl exps s = do
   (oldStore, fStore) <- evalArgs exps (extractArgnames $ function cl) s s {env = fenv cl}
@@ -124,6 +136,7 @@ fStTransformer cl exps s = do
       Just v -> return (v, oldStore {globalstore = globalstore fStore', fstore = fstore fStore'})
       Nothing -> error "what the heck just happend"
 
+-- TODO: add bindings from current store to function store too
 evalArgs :: [Expression] -> [String] -> Store -> Store -> IO (Store, Store)
 evalArgs (e : es) (n : ns) oldStr fStr = do
   (val, oldStr') <- (S.runStateT $ evalE e) oldStr
@@ -134,11 +147,11 @@ evalArgs (e : es) [] oldStr fStr = do
 evalArgs [] (n : ns) oldStr fStr = do
   (_, fStr') <- (S.runStateT $ update (Ref n) NilVal) fStr
   evalArgs [] ns oldStr fStr'
-evalArgs [] [] oldStr fStr = return (oldStr, fStr)
+evalArgs [] [] oldStr fStr = return (oldStr, fStr) -}
 
 pullReturn :: Store -> Value
 pullReturn store = case Map.lookup "_return" (env store) of
-  Nothing -> error "_return not in environment"
+  Nothing -> NilVal
   Just gref -> case Map.lookup gref (globalstore store) of
     Just v -> v
     Nothing -> error "_return reference not available in globalstore"
@@ -152,25 +165,25 @@ extractArgnames (Function argnames block) = argnames
 extractStatements :: Block -> [Statement]
 extractStatements (Block s) = s
 
--- old state plus evaluated args
-setEnv :: Environment -> [String] -> [Expression] -> StateT Store IO ()
-setEnv fenv (n : ns) (e : es) = do
+-- current env bindings + closure bindings + args
+setEnv :: [String] -> [Expression] -> Store -> StateT Store IO Store
+setEnv (n : ns) (e : es) fstr = do
   s <- S.get
-  val <- evalE e
-  let len = length $ Map.keys (globalstore s)
-  let gref = "_v" ++ show len
-  S.put (defineVar n gref val s)
-setEnv fenv [] (e : es) = do
+  v <- evalE e
+  S.put fstr
+  update (Ref n) v
+  fstr' <- S.get
+  S.put s
+  setEnv ns es fstr'
+setEnv (n : ns) [] fstr = do
   s <- S.get
-  S.put (s {env = fenv})
-setEnv fenv (n : ns) [] = do
-  s <- S.get
-  let len = length $ Map.keys (globalstore s)
-  let gref = "_v" ++ show len
-  S.put (defineVar n gref NilVal s)
-setEnv fenv [] [] = do
-  s <- S.get
-  S.put (s {env = fenv})
+  S.put fstr
+  update (Ref n) NilVal
+  fstr' <- S.get
+  S.put s
+  setEnv ns [] fstr'
+setEnv [] (e : es) fstr = return fstr
+setEnv [] [] fstr = return fstr
 
 evalOp1 :: Uop -> Value -> Value
 evalOp1 Neg (IntVal v) = IntVal $ negate v
@@ -250,20 +263,25 @@ exec = S.execStateT . eval
 
 step :: Block -> StateT Store IO Block
 step (Block ((FCallSt (FCall v argexps)) : otherSs)) = do
-  b <- lift promptYN
-  if b then lift $ putStrLn "user said yes" else lift $ putStrLn "user said no"
   s <- S.get
   vr <- resolveVar v
   ref <- index vr
+  stepin <- lift promptYN
   case ref of
     (FRef fref) -> do
       case Map.lookup fref (fstore s) of
         Nothing -> error "closure not found"
         Just cs -> do
-          setEnv (fenv cs) (extractArgnames . function $ cs) argexps
+          fstr <- setEnv (extractArgnames . function $ cs) argexps s {env = fenv cs}
+          S.put fstr
           let bk = extractStatements (extractFunction (function cs))
           let rs = Restore $ env s
-          return $ Block (bk ++ [rs] ++ otherSs)
+          if stepin
+            then return $ Block (bk ++ [rs] ++ otherSs)
+            else do
+              evalB $ extractFunction (function cs)
+              S.put s
+              return (Block otherSs)
     _ -> error "function not found"
 step (Block ((Restore ev) : otherSs)) = do
   s <- S.get
