@@ -1,0 +1,4 @@
+x = 10
+f = function(y) return y + 1 end
+f(x) 
+z = 3

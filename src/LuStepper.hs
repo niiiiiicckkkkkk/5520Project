@@ -19,11 +19,11 @@ data Store = MkStr
     globalstore :: Map String Value,
     fstore :: FunctionStore,
     block :: Block,
-    history :: Store,
-    filename :: String
+    history :: Maybe Store,
+    filename :: Maybe String
   }
 
-initialStore :: Store = MkStr Map.empty Map.empty Map.empty mempty initialStore ""
+initialStore :: Store = MkStr Map.empty Map.empty Map.empty mempty Nothing Nothing
 
 -- type Table = Map Value Value
 
@@ -93,7 +93,7 @@ resolveVar (Dot exp n) = error "no tables"
 resolveVar (Proj exp1 exp2) = error "no tables"
 
 -- | Expression evaluator
-evalE :: Expression -> StateT Store IO (Value)
+evalE :: Expression -> StateT Store IO Value
 evalE (Var v) = do
   ref <- resolveVar v -- see above
   index ref
@@ -121,8 +121,6 @@ evalE (FCallExp (FCall var argexps)) = do
                     S.put s {globalstore = globalstore s', fstore = fstore s'}
                     return returned
     _ -> error "fcall's var did not map to a function"
-
--- S.StateT $ fStTransformer ref argexps
 evalE (FDefExp (FDef argnames block)) = do
   s <- S.get
   let len = length $ Map.keys (fstore s)
@@ -279,7 +277,9 @@ step (Block ((FCallSt (FCall v argexps)) : otherSs)) = do
           fstr <- setEnv (extractArgnames . function $ cs) argexps s {env = fenv cs}
           let bk = extractStatements (extractFunction (function cs))
           if stepin
-            then go fstr {block = Block bk}
+            then do
+              go fstr {block = Block bk}
+              S.put s {block = Block otherSs}
             else do
               evalB $ extractFunction (function cs)
               S.put s {block = Block otherSs}
@@ -297,7 +297,6 @@ step (Block (w@(While e (Block ss)) : otherSs)) = do
     then S.put s {block = Block (ss ++ [w] ++ otherSs)}
     else S.put s {block = Block otherSs}
 step (Block (a@(Assign v e) : otherSs)) = do
-  lift $ putStrLn "assignment"
   evalS a
   s <- S.get
   S.put s {block = Block otherSs}
@@ -331,33 +330,45 @@ step b@(Block []) = do
 -- execStep :: Block -> Store -> IO Store
 -- execStep b = S.execStateT (allStep b)
 
-stepForward :: StateT Store IO ()
+stepForward :: StateT Store IO Bool
 stepForward = do
   s <- S.get
   step $ block s
-
+  s' <- S.get
+  S.put s' {history = Just s}
+  case block s' of
+    Block [] -> return False
+    _ -> return True
 {-
   let (block', store') = steps 1 (block ss) (store ss)
    in do
     ss {block = block', store = store', history = Just ss}-}
 
-stepForwardN :: Int -> StateT Store IO ()
-stepForwardN 0 = return ()
+stepForwardN :: Int -> StateT Store IO Bool
+stepForwardN 0 = return True
 stepForwardN n = do
   s <- S.get
-  stepForward
-  stepForwardN (n - 1)
+  rs <- stepForward
+  if rs then stepForwardN (n - 1)
+  else return False
 
-stepBackward :: StateT Store IO ()
+stepBackward :: StateT Store IO Bool
 stepBackward = do
   s <- S.get
-  S.put $ history s
+  case history s of
+    Just s' -> do
+      S.put s'
+      return False
+    Nothing -> do
+      lift $ putStr "No History to revert..."
+      return True
 
 stepBackwardN :: Int -> StateT Store IO ()
 stepBackwardN 0 = return ()
 stepBackwardN n = do
-  stepBackward
-  stepBackwardN (n - 1)
+  start <- stepBackward
+  if start then return ()
+  else stepBackwardN (n - 1)
 
 promptYN :: IO Bool
 promptYN = do
@@ -371,7 +382,7 @@ go :: Store -> StateT Store IO ()
 go st = do
   S.put st
   lift $ prompt st
-  lift $ putStr ("Lu " ++ filename st ++ "> ")
+  lift $ putStr (fromMaybe "Lu" (filename st) ++ "> ")
   str <- lift getLine
   case List.uncons (words str) of
     -- load a file for stepping
@@ -383,7 +394,7 @@ go st = do
           go st
         (Right b) -> do
           lift $ putStr ("Loaded " ++ fn ++ ", initializing stepper\n")
-          go st {filename = fn, block = b}
+          go st {filename = Just fn, block = b}
     -- dump the store
     Just (":d", _) -> do
       lift $ putStrLn (pretty $ globalstore st)
@@ -403,9 +414,10 @@ go st = do
             Just x -> x
             Nothing -> 1
        in do
-            stepForwardN numSteps
-            newStore <- S.get
-            go newStore
+            rs <- stepForwardN numSteps
+            when rs $ do
+              s' <- S.get
+              go s'
     -- previous statement
     -- NOTE: this should revert steps of the evaluator not
     -- commands to the stepper. With :n 5 followed by :p
@@ -415,10 +427,10 @@ go st = do
           numSteps = case readMaybe (concat strs) of
             Just x -> x
             Nothing -> 1
-
-      stepBackwardN numSteps
-      s' <- S.get
-      go s'
+        in do
+          stepBackwardN numSteps
+          s' <- S.get
+          go s'
     -- evaluate an expression in the current state
     _ ->
       case LuParser.parseStatement str of

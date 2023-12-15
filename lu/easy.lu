@@ -5,3 +5,4 @@ fact = function(n, f)
         n = n - 1 end 
     return f end
 fact(5, 1)
+y = 10
