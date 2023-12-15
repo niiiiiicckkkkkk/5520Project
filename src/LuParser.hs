@@ -69,8 +69,8 @@ expP = compP
         <|> Op1 <$> uopP <*> uopexpP
     baseP =
       tableConstP
-        <|> FDefExp <$> fDefP
-        <|> FCallExp <$> fCallP
+        <|> DefExp <$> fDefP
+        <|> CallExp <$> fCallP
         <|> Var <$> varP
         <|> parens expP
         <|> Val <$> valueP
@@ -162,14 +162,14 @@ tableConstP = TableConst <$> braces (P.sepBy fieldP (wsP (P.char ',')))
         fieldKeyP :: Parser TableField
         fieldKeyP = liftA2 FieldKey (brackets expP) (afterP "=" expP)
 
-fCallP :: Parser FCall
-fCallP = FCall <$> varP <*> parens (P.sepBy expP (wsP (P.char ',')))
+fCallP :: Parser Call
+fCallP = Call <$> varP <*> parens (P.sepBy expP (wsP (P.char ',')))
 
-fDefP :: Parser FDef
-fDefP = FDef <$> wsP (afterP "function" $ parens $ P.sepBy nameP (wsP (P.char ','))) <*> (blockP <* stringP "end")
+fDefP :: Parser Def
+fDefP = Def <$> wsP (afterP "function" $ parens $ P.sepBy nameP (wsP (P.char ','))) <*> (blockP <* stringP "end")
 
 statementP :: Parser Statement
-statementP = wsP (assignP <|> ifP <|> whileP <|> emptyP <|> repeatP <|> returnP <|> FCallSt <$> fCallP)
+statementP = wsP (assignP <|> ifP <|> whileP <|> emptyP <|> repeatP <|> returnP <|> CallSt <$> fCallP)
   where
     assignP :: Parser Statement
     assignP = Assign <$> varP <*> (stringP "=" *> expP)

@@ -37,6 +37,7 @@ data Function = Function [String] Block
 data Reference
   = Ref String
   | TableRef (String, Value)
+  | NoRef
 
 {-
 tableFromState :: Name -> State Store (Maybe Table)
@@ -52,7 +53,18 @@ index (Ref r) = do
       Just val -> return val
       Nothing -> error "mapping exists in env but not in globalstore"
     Nothing -> return NilVal
-index (TableRef (eref, tkey)) = error "undefined"
+index (TableRef (eref, tkey)) = do
+  s <- S.get
+  case Map.lookup eref (env s) of
+    Just gkey -> case Map.lookup gkey (globalstore s) of
+      Just (TableName name) -> case Map.lookup name (globalstore s) of
+        Just (Table t) -> case Map.lookup tkey t of
+          Just v -> return v
+          _ -> return NilVal
+        _ -> error "table name does not map to a table"
+      _ -> error "mapping exists in env but not in globalstore"
+    Nothing -> return NilVal
+index NoRef = return NilVal
 
 update :: Reference -> Value -> StateT Store IO ()
 update (Ref eref) v' = do
@@ -74,7 +86,8 @@ update (TableRef (eref, tkey)) v' = do
       case Map.lookup gref (globalstore s) of
         Nothing -> error "mapping exists in env but not in globalstore -- table"
         Just (Table tb) -> S.put (s {globalstore = Map.insert gref (Table (Map.insert tkey v' tb)) (globalstore s)})
-        _ -> error "idk haha"
+        _ -> error "table value not found in globalstore"
+update NoRef _ = return ()
 
 defineVar :: String -> String -> Value -> Store -> Store
 defineVar eref gref v' s =
@@ -88,12 +101,21 @@ defineVar eref gref v' s =
 -- when the var is `2.y` or `nil[2]` (i.e. not a `TableVal`)
 -- or when the var is t[nil]
 resolveVar :: Var -> StateT Store IO Reference
-resolveVar (Name n) = return $ Ref n
-resolveVar (Dot exp n) = error "no tables"
-resolveVar (Proj exp1 exp2) = error "no tables"
+resolveVar (Name name) = return $ Ref name
+resolveVar (Dot exp name) = do
+  v <- evalE exp
+  case v of
+    TableName t -> do return $ TableRef (t, StringVal name)
+    _ -> return NoRef
+resolveVar (Proj exp1 exp2) = do
+  v1 <- evalE exp1
+  v2 <- evalE exp2
+  case v1 of
+    TableName t -> return $ TableRef (t, v2)
+    _ -> return NoRef
 
 -- | lookup closure in fstore
-fLookup :: Expression -> StateT Store Maybe Closure
+fLookup :: Expression -> StateT Store IO (Maybe Closure)
 fLookup (CallExp (Call var argexps)) = do
   s <- S.get
   r <- resolveVar var
@@ -103,6 +125,35 @@ fLookup (CallExp (Call var argexps)) = do
     _ -> return Nothing
 fLookup _ = return Nothing
 
+nonNil :: (Value, Value) -> Bool
+nonNil (_, NilVal) = False
+nonNil (NilVal, _) = False
+nonNil _ = True
+
+tableFieldToValue :: TableField -> StateT Store IO (Value, Value)
+tableFieldToValue (FieldName name exp) = do
+  v <- evalE exp
+  return (StringVal name, v)
+tableFieldToValue (FieldKey exp1 exp2) = do
+  v1 <- evalE exp1
+  v2 <- evalE exp2
+  return (v1, v2)
+
+allocateTable :: [(Value, Value)] -> StateT Store IO Value
+allocateTable assocs = do
+  store <- S.get
+  -- make a fresh name for the new table
+  let n = length (Map.keys $ globalstore store)
+  let kTable = "_t" ++ show n
+  let kTableName = "_v" ++ show (n + 1)
+  -- make sure we don't have a nil key or value
+  let assocs' = filter nonNil assocs
+  -- update the store
+  S.put store {globalstore = Map.insert kTable (Table $ Map.fromList assocs') (globalstore store)}
+  store' <- S.get
+  S.put store {globalstore = Map.insert kTableName (TableName kTable) (globalstore store')}
+  return (TableName kTableName)
+
 -- | Expression evaluator
 evalE :: Expression -> StateT Store IO Value
 evalE (Var v) = do
@@ -110,10 +161,16 @@ evalE (Var v) = do
   index ref
 evalE (Val v) = return v
 evalE (Op2 e1 o e2) = evalOp2 o <$> evalE e1 <*> evalE e2
-evalE (Op1 o e) = evalOp1 o <$> evalE e
-evalE (TableConst _fs) = error "no tables"
-evalE (CallExp call@(Call var argexps)) =
-  case fLookup call of
+evalE (Op1 o e) = do
+  v <- evalE e
+  evalOp1 o v
+evalE (TableConst fs) = do
+  assocs <- mapM tableFieldToValue fs
+  allocateTable assocs
+evalE c@(CallExp (Call v argexps)) = do
+  s <- S.get
+  mclosure <- fLookup c
+  case mclosure of
     Nothing -> error "closure not found"
     Just cs -> do
       stepin <- lift promptYN
@@ -174,15 +231,19 @@ setEnv (n : ns) [] fstr = do
 setEnv [] (e : es) fstr = return fstr
 setEnv [] [] fstr = return fstr
 
-evalOp1 :: Uop -> Value -> Value
-evalOp1 Neg (IntVal v) = IntVal $ negate v
-evalOp1 Len (StringVal v) = IntVal $ length v
-evalOp1 Len (TableVal v) = error "no tables"
-evalOp1 Len iv@(IntVal v) = iv
-evalOp1 Len (BoolVal True) = IntVal 1
-evalOp1 Len (BoolVal False) = IntVal 0
-evalOp1 Not v = BoolVal $ not $ toBool v
-evalOp1 _ _ = NilVal
+evalOp1 :: Uop -> Value -> StateT Store IO Value
+evalOp1 Neg (IntVal v) = return $ IntVal $ negate v
+evalOp1 Len (StringVal v) = return $ IntVal $ length v
+evalOp1 Len (TableName v) = do
+  s <- S.get
+  case Map.lookup v (globalstore s) of
+    Just (Table t) -> return $ IntVal $ Map.size t
+    _ -> error "tablename doesn't bind to valid table"
+evalOp1 Len iv@(IntVal v) = return iv
+evalOp1 Len (BoolVal True) = return $ IntVal 1
+evalOp1 Len (BoolVal False) = return $ IntVal 0
+evalOp1 Not v = return $ BoolVal $ not $ toBool v
+evalOp1 _ _ = return NilVal
 
 evalOp2 :: Bop -> Value -> Value -> Value
 evalOp2 Plus (IntVal i1) (IntVal i2) = IntVal (i1 + i2)

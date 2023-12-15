@@ -60,7 +60,7 @@ data Value
   | IntVal Int -- 1
   | BoolVal Bool -- false, true
   | StringVal String -- "abd"
-  | TableVal Name -- <not used in source programs>
+  | TableName String -- <not used in source programs>
   | Table (Map Value Value)
   | FRef Name -- index into the function store
   deriving (Eq, Show, Ord)
@@ -217,6 +217,9 @@ instance PP String where
 instance PP Int where
   pp = PP.int
 
+instance PP (Value, Value) where
+  pp (v1, v2) = PP.parens (pp v1 <> PP.comma <> pp v2)
+
 instance PP Var where
   pp (Name n) = PP.text n
   pp (Dot (Var v) k) = pp v <> PP.text "." <> pp k
@@ -229,8 +232,9 @@ instance PP Value where
   pp (BoolVal b) = pp b
   pp NilVal = PP.text "nil"
   pp (StringVal s) = PP.text ("\"" <> s <> "\"")
-  pp (TableVal t) = PP.text "<" <> PP.text t <> PP.text ">"
-  pp (Table t) = PP.text "table pretty-print todo"
+  -- pp (TableVal t) = PP.text "<" <> PP.text t <> PP.text ">"
+  pp (Table t) = PP.braces (PP.sep (PP.punctuate PP.comma (map pp (Map.toList t))))
+  pp (TableName name) = PP.text name
   pp (FRef r) = PP.text "function reference: " <> PP.text r
 
 isBase :: Expression -> Bool
@@ -265,8 +269,8 @@ instance PP Expression where
       ppPrec _ e' = pp e'
       ppParens b = if b then PP.parens else id
   pp (TableConst fs) = PP.braces (PP.sep (PP.punctuate PP.comma (map pp fs)))
-  pp (FDefExp (FDef args bk)) = PP.sep (PP.punctuate PP.comma (map pp args)) <+> pp bk
-  pp (FCallExp (FCall v args)) = pp v <+> PP.parens (PP.sep (PP.punctuate PP.comma (map pp args)))
+  pp (DefExp (Def args bk)) = PP.sep (PP.punctuate PP.comma (map pp args)) <+> pp bk
+  pp (CallExp (Call v args)) = pp v <+> PP.parens (PP.sep (PP.punctuate PP.comma (map pp args)))
 
 instance PP TableField where
   pp (FieldName name e) = pp name <+> PP.equals <+> pp e
@@ -293,7 +297,7 @@ instance PP Statement where
     PP.hang (PP.text "repeat") 2 (pp b)
       PP.$+$ PP.text "until"
       <+> pp e
-  pp (FCallSt e) = pp (FCallExp e)
+  pp (CallSt e) = pp (CallExp e)
   pp (Return e) = PP.text "return" <+> pp e
 
 level :: Bop -> Int
@@ -440,7 +444,9 @@ instance Arbitrary Statement where
     first b
       ++ [Repeat b' e | b' <- shrink b]
       ++ [Repeat b e' | e' <- shrink e]
-  shrink _ = error "define statement shrink"
+  shrink (Return e) =
+    [Return e' | e' <- shrink e]
+  shrink _ = undefined
 
 -- | access the first statement in a block, if one exists
 first :: Block -> [Statement]
@@ -499,6 +505,6 @@ instance Arbitrary Value where
   shrink (BoolVal b) = BoolVal <$> shrink b
   shrink NilVal = []
   shrink (StringVal s) = StringVal <$> shrinkStringLit s
-  shrink (TableVal _) = []
+  -- shrink (TableVal _) = []
   shrink (Table _) = error "define table shrink"
   shrink (FRef _) = error "defined FRef shrink"
