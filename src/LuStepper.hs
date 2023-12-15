@@ -92,6 +92,17 @@ resolveVar (Name n) = return $ Ref n
 resolveVar (Dot exp n) = error "no tables"
 resolveVar (Proj exp1 exp2) = error "no tables"
 
+-- | lookup closure in fstore
+fLookup :: Expression -> StateT Store Maybe Closure
+fLookup (CallExp (Call var argexps)) = do
+  s <- S.get
+  r <- resolveVar var
+  ref <- index r
+  case ref of
+    (FRef fref) -> return $ Map.lookup fref (fstore s)
+    _ -> return Nothing
+fLookup _ = return Nothing
+
 -- | Expression evaluator
 evalE :: Expression -> StateT Store IO Value
 evalE (Var v) = do
@@ -101,57 +112,31 @@ evalE (Val v) = return v
 evalE (Op2 e1 o e2) = evalOp2 o <$> evalE e1 <*> evalE e2
 evalE (Op1 o e) = evalOp1 o <$> evalE e
 evalE (TableConst _fs) = error "no tables"
-evalE (FCallExp (FCall var argexps)) = do
-  s <- S.get
-  r <- resolveVar var
-  ref <- index r
-  case ref of
-    (FRef fref) ->
-      let closure = Map.lookup fref (fstore s)
-       in case closure of
-            Nothing -> error "closure didn't exist but should"
-            Just cs -> do
-              lift $ putStrLn "evaluating function"
-              fstr <- setEnv (extractArgnames . function $ cs) argexps s {env = fenv cs}
-              S.put fstr
-              evalB (extractFunction . function $ cs)
-              s' <- S.get
-              let returned = pullReturn s'
-               in do
-                    S.put s {globalstore = globalstore s', fstore = fstore s'}
-                    return returned
-    _ -> error "fcall's var did not map to a function"
-evalE (FDefExp (FDef argnames block)) = do
+evalE (CallExp call@(Call var argexps)) =
+  case fLookup call of
+    Nothing -> error "closure not found"
+    Just cs -> do
+      stepin <- lift promptYN
+      fstr <- setEnv (extractArgnames . function $ cs) argexps s {env = fenv cs}
+      S.put fstr {block = extractFunction . function $ cs}
+      if stepin
+        then do
+          S.put fstr {block = extractFunction . function $ cs}
+          go
+        else do
+          evalB (extractFunction . function $ cs)
+      returnS <- S.get
+      let returned = pullReturn returnS
+       in do
+            S.put returnS {block = block s, env = env s}
+            return returned
+evalE (DefExp (Def argnames block)) = do
   s <- S.get
   let len = length $ Map.keys (fstore s)
   let ref = "_f" ++ show len
   let c = Closure {fenv = env s, function = Function argnames block}
    in S.put s {fstore = Map.insert ref c (fstore s)}
   return (FRef ref)
-
-{-
-fStTransformer :: Closure -> [Expression] -> Store -> IO (Value, Store)
-fStTransformer cl exps s = do
-  (oldStore, fStore) <- evalArgs exps (extractArgnames $ function cl) s s {env = fenv cl}
-  (_, fStore') <- (S.runStateT $ evalB (extractFunction $ function cl)) fStore
-  case Map.lookup "_return" (env fStore') of
-    Nothing -> return (NilVal, oldStore)
-    Just gref -> case Map.lookup gref (globalstore fStore') of
-      Just v -> return (v, oldStore {globalstore = globalstore fStore', fstore = fstore fStore'})
-      Nothing -> error "what the heck just happend"
-
--- TODO: add bindings from current store to function store too
-evalArgs :: [Expression] -> [String] -> Store -> Store -> IO (Store, Store)
-evalArgs (e : es) (n : ns) oldStr fStr = do
-  (val, oldStr') <- (S.runStateT $ evalE e) oldStr
-  (_, fStr') <- (S.runStateT $ update (Ref n) val) fStr
-  evalArgs es ns oldStr' fStr'
-evalArgs (e : es) [] oldStr fStr = do
-  evalArgs es [] oldStr fStr
-evalArgs [] (n : ns) oldStr fStr = do
-  (_, fStr') <- (S.runStateT $ update (Ref n) NilVal) fStr
-  evalArgs [] ns oldStr fStr'
-evalArgs [] [] oldStr fStr = return (oldStr, fStr) -}
 
 pullReturn :: Store -> Value
 pullReturn store = case Map.lookup "_return" (env store) of
@@ -255,8 +240,8 @@ evalS Empty = return () -- do nothing
 evalS (Return e) = do
   v <- evalE e
   update (Ref "_return") v
-evalS (FCallSt f@(FCall v argexps)) = do
-  evalE $ FCallExp f
+evalS (CallSt f@(Call v argexps)) = do
+  evalE $ CallExp f
   return ()
 
 exec :: Block -> Store -> IO Store
@@ -264,26 +249,10 @@ exec = S.execStateT . eval
 
 -- block to store (state after one statement)
 step :: Block -> StateT Store IO ()
-step (Block ((FCallSt (FCall v argexps)) : otherSs)) = do
+step (Block (call@(CallSt (Call v argexps)) : otherSs)) = do
+  evalS call
   s <- S.get
-  vr <- resolveVar v
-  ref <- index vr
-  stepin <- lift promptYN
-  case ref of
-    (FRef fref) -> do
-      case Map.lookup fref (fstore s) of
-        Nothing -> error "closure not found"
-        Just cs -> do
-          fstr <- setEnv (extractArgnames . function $ cs) argexps s {env = fenv cs}
-          let bk = extractStatements (extractFunction (function cs))
-          if stepin
-            then do
-              go fstr {block = Block bk}
-              S.put s {block = Block otherSs}
-            else do
-              evalB $ extractFunction (function cs)
-              S.put s {block = Block otherSs}
-    _ -> error "function not found"
+  S.put s {block = Block otherSs}
 step (Block ((If e (Block ss1) (Block ss2)) : otherSs)) = do
   v <- evalE e
   s <- S.get
@@ -291,8 +260,8 @@ step (Block ((If e (Block ss1) (Block ss2)) : otherSs)) = do
     then S.put s {block = Block (ss1 ++ otherSs)}
     else S.put s {block = Block (ss2 ++ otherSs)}
 step (Block (w@(While e (Block ss)) : otherSs)) = do
-  s <- S.get
   v <- evalE e
+  s <- S.get
   if toBool v
     then S.put s {block = Block (ss ++ [w] ++ otherSs)}
     else S.put s {block = Block otherSs}
@@ -301,6 +270,10 @@ step (Block (a@(Assign v e) : otherSs)) = do
   s <- S.get
   S.put s {block = Block otherSs}
 step (Block ((Repeat b e) : otherSs)) = step (Block (While (Op1 Not e) b : otherSs))
+step (Block (r@(Return exp) : otherSs)) = do
+  evalS r
+  s <- S.get
+  S.put s {block = Block []}
 step (Block (empty : otherSs)) = do
   s <- S.get
   S.put s {block = Block otherSs}
@@ -339,6 +312,7 @@ stepForward = do
   case block s' of
     Block [] -> return False
     _ -> return True
+
 {-
   let (block', store') = steps 1 (block ss) (store ss)
    in do
@@ -347,10 +321,10 @@ stepForward = do
 stepForwardN :: Int -> StateT Store IO Bool
 stepForwardN 0 = return True
 stepForwardN n = do
-  s <- S.get
   rs <- stepForward
-  if rs then stepForwardN (n - 1)
-  else return False
+  if rs
+    then stepForwardN (n - 1)
+    else return False
 
 stepBackward :: StateT Store IO Bool
 stepBackward = do
@@ -367,20 +341,21 @@ stepBackwardN :: Int -> StateT Store IO ()
 stepBackwardN 0 = return ()
 stepBackwardN n = do
   start <- stepBackward
-  if start then return ()
-  else stepBackwardN (n - 1)
+  if start
+    then return ()
+    else stepBackwardN (n - 1)
 
 promptYN :: IO Bool
 promptYN = do
-  putStrLn "step in? (y/n)"
+  putStrLn "step in? (y / n)"
   str <- getLine
   case str of
     ('y' : ss) -> return True
     _ -> return False
 
-go :: Store -> StateT Store IO ()
-go st = do
-  S.put st
+go :: StateT Store IO ()
+go = do
+  st <- S.get
   lift $ prompt st
   lift $ putStr (fromMaybe "Lu" (filename st) ++ "> ")
   str <- lift getLine
@@ -391,22 +366,22 @@ go st = do
       case parseResult of
         (Left _) -> do
           lift $ putStr "Failed to parse file"
-          go st
+          go
         (Right b) -> do
           lift $ putStr ("Loaded " ++ fn ++ ", initializing stepper\n")
-          go st {filename = Just fn, block = b}
+          S.put st {filename = Just fn, block = b}
+          go
     -- dump the store
     Just (":d", _) -> do
       lift $ putStrLn (pretty $ globalstore st)
       lift $ putStrLn (pretty $ env st)
-      go st
+      go
     -- quit the stepper
     Just (":q", _) -> return ()
     -- run current block to completion
     Just (":r", _) -> do
       evalB $ block st
-      s' <- S.get
-      go s'
+      go
     -- next statement (could be multiple)
     Just (":n", strs) -> do
       let numSteps :: Int
@@ -416,8 +391,7 @@ go st = do
        in do
             rs <- stepForwardN numSteps
             when rs $ do
-              s' <- S.get
-              go s'
+              go
     -- previous statement
     -- NOTE: this should revert steps of the evaluator not
     -- commands to the stepper. With :n 5 followed by :p
@@ -427,29 +401,25 @@ go st = do
           numSteps = case readMaybe (concat strs) of
             Just x -> x
             Nothing -> 1
-        in do
-          stepBackwardN numSteps
-          s' <- S.get
-          go s'
+       in do
+            stepBackwardN numSteps
+            go
     -- evaluate an expression in the current state
     _ ->
       case LuParser.parseStatement str of
         Right stmt -> do
           evalS stmt
-          s' <- S.get
           -- putStr "evaluated statement\n"
-          go s'
+          go
         Left _s -> do
           -- putStr "evaluated expression\n"
           case LuParser.parseLuExp str of
             Right exp -> do
               v <- evalE exp
-              s' <- S.get
-              lift $ putStrLn (pretty v)
-              go s'
+              go
             Left _s -> do
               lift $ putStrLn "?"
-              go st
+              go
 
 prompt :: Store -> IO ()
 prompt st = case block st of

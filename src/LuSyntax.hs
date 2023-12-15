@@ -38,7 +38,7 @@ data Statement
   | Empty -- ';'
   | Repeat Block Expression -- repeat s until e
   | Return Expression
-  | FCallSt FCall
+  | CallSt Call
   deriving (Eq, Show)
 
 data Expression
@@ -47,13 +47,13 @@ data Expression
   | Op1 Uop Expression -- unary operators
   | Op2 Expression Bop Expression -- binary operators
   | TableConst [TableField] -- table construction, { x = 3 , y = 5 }
-  | FDefExp FDef
-  | FCallExp FCall
+  | DefExp Def
+  | CallExp Call
   deriving (Eq, Show)
 
-data FDef = FDef [String] Block deriving (Eq, Show)
+data Def = Def [String] Block deriving (Eq, Show)
 
-data FCall = FCall Var [Expression] deriving (Eq, Show)
+data Call = Call Var [Expression] deriving (Eq, Show)
 
 data Value
   = NilVal -- nil
