@@ -354,27 +354,20 @@ step b@(Block []) = do
   s <- S.get
   S.put s {block = Block []}
 
--- | Evaluate this thread for a specified number of steps
--- boundedStep :: Int -> Block -> StateT Store IO Block
--- boundedStep 0 b = return b
--- boundedStep _ b | blockFinal b = return b
--- boundedStep n b = step b >>= boundedStep (n - 1)
-
--- | Evaluate this thread for a specified number of steps, using the specified store
--- steps :: Int -> Block -> Store -> IO (Block, Store)
--- steps n block = S.runStateT (boundedStep n block)
-
 -- | Is this block completely evaluated?
--- blockFinal :: Block -> Bool
--- blockFinal (Block []) = True
--- blockFinal _ = False
+blockFinal :: Block -> Bool
+blockFinal (Block []) = True
+blockFinal _ = False
 
--- allStep :: Block -> StateT Store IO Block
--- allStep b | blockFinal b = return b
--- allStep b = step b >>= allStep
+allStep :: Block -> StateT Store IO Block
+allStep b | blockFinal b = return b
+allStep b = do
+  step b
+  s <- S.get
+  allStep (block s)
 
--- execStep :: Block -> Store -> IO Store
--- execStep b = S.execStateT (allStep b)
+execStep :: Block -> Store -> IO Store
+execStep b = S.execStateT (allStep b)
 
 stepForward :: StateT Store IO Bool
 stepForward = do

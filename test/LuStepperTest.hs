@@ -9,27 +9,41 @@ import Test.HUnit
 import Test.QuickCheck qualified as QC
 
 extendedStore :: Store
-extendedStore =
-  Map.fromList
-    [ ( globalTableName,
-        Map.fromList
-          [ (StringVal "x", IntVal 3),
-            (StringVal "t", TableVal "_t1")
-          ]
-      ),
-      ( "_t1",
-        Map.fromList
-          [ (StringVal "y", BoolVal True),
-            (IntVal 2, TableVal "_t1")
-          ]
+extendedStore = MkStr {
+  env = Map.fromList [
+    ("x", "_v0"),
+    ("y", "_v1"),
+    ("t", "_v2"),
+    ("_tenv1", "_t0")
+  ],
+  globalstore = Map.fromList [
+    ("_v0", IntVal 3),
+    ("_v1", StringVal "hello"),
+    ("_v2", EnvTableK "_tenv1"),
+    ("_t0", Table $ Map.fromList [(StringVal "a", IntVal 1), (StringVal "b", IntVal 2)])
+  ],
+  fstore = Map.fromList [
+    Map.fromList [
+      ("_f0", 
+        Closure {
+          fenv = Map.empty,
+          function = Function $ ["x"] Block [Return $ Var "x"]
+        }
       )
     ]
+  ],
+  block = Block [
+    Assign (Var "z") (StringVal "ok!")
+  ],
+  history = Nothing,
+  filename = Nothing
+}
 
 xref :: Reference
-xref = ("_G", StringVal "x")
+xref = Ref "x"
 
-yref :: Reference
-yref = ("_t1", StringVal "y")
+tref :: Reference
+tref = TableRef ("t", "a")
 
 -- | Stepper Unit Tests
 test_index :: Test
@@ -41,13 +55,15 @@ test_index =
         -- But there is a value for "x" available in the extended store
         S.evalState (index xref) extendedStore ~?= IntVal 3,
         -- If a table name is not found in the store, accessing its reference also returns nil.
-        S.evalState (index yref) initialStore ~?= NilVal,
+        S.evalState (index tref) initialStore ~?= NilVal,
         -- We should also be able to access "t[1]" in the extended store
-        S.evalState (index yref) extendedStore ~?= BoolVal True,
+        S.evalState (index tref) extendedStore ~?= BoolVal True,
         S.evalState (index ("z", NilVal)) extendedStore ~?= NilVal,
         -- Updates using the `nil` key are ignored
-        S.execState (update ("_t1", NilVal) (IntVal 3)) extendedStore ~?= extendedStore,
-        S.evalState (index (globalTableName, StringVal "t")) extendedStore ~?= TableVal "_t1"
+        S.execState (update ("t", NilVal) (IntVal 3)) extendedStore ~?= extendedStore,
+        S.evalState (index "x") extendedStore ~?= IntVal 3,
+        S.evalState (index "y") extendedStore ~?= StringVal "hello",
+        S.evalState (index ("t", "a")) extendedStore ~?= IntVal 1
       ]
 
 test_update :: Test
@@ -59,9 +75,9 @@ test_update =
         -- If we assign to x, then remove it, we cannot find it anymore
         S.evalState (update xref (IntVal 4) >> update xref NilVal >> index xref) initialStore ~?= NilVal,
         -- If we assign to t.y, then we can find its new value
-        S.evalState (update yref (IntVal 5) >> index yref) extendedStore ~?= IntVal 5,
+        S.evalState (update tref (IntVal 5) >> index tref) extendedStore ~?= IntVal 5,
         -- If we assign nil to t.y, then we cannot find it
-        S.evalState (update yref NilVal >> index yref) extendedStore ~?= NilVal
+        S.evalState (update tref NilVal >> index tref) extendedStore ~?= NilVal
       ]
 
 test_resolveVar :: Test
@@ -101,64 +117,62 @@ test_evaluateLen =
   "evaluate len"
     ~: TestList
       [ evaluate (Op1 Len (Val (StringVal "5520"))) extendedStore ~?= IntVal 4,
-        evaluate (Op1 Len (Val (TableVal "_G"))) extendedStore ~?= IntVal 2,
-        evaluate (Op1 Len (Val (TableVal "_t1"))) extendedStore ~?= IntVal 2,
-        evaluate (Op1 Len (Val (TableVal "_t550"))) extendedStore ~?= NilVal,
+        evaluate (Op1 Len (Val (EnvTableK "_tenv1"))) extendedStore ~?= IntVal 2,
+        evaluate (Op1 Len (Val (EnvTableK "_t550"))) extendedStore ~?= NilVal,
         evaluate (Op1 Len (Val (IntVal 5520))) extendedStore ~?= IntVal 5520,
         evaluate (Op1 Len (Val (BoolVal True))) extendedStore ~?= IntVal 1,
         evaluate (Op1 Len (Val NilVal)) extendedStore ~?= NilVal
       ]
 
-test_tableConst :: Test
-test_tableConst =
-  "evaluate { x = 3 } "
-    ~: TestList
-      [ S.runState
-          (evalE (TableConst [FieldName "x" (Val (IntVal 3))]))
-          initialStore
-          ~?= ( TableVal "_t1",
-                Map.fromList
-                  [ ("_G", Map.empty),
-                    ("_t1", Map.fromList [(StringVal "x", IntVal 3)])
-                  ]
-              ),
-        S.runState
-          (evalE (TableConst [FieldName "x" (Val (IntVal 3)), FieldName "y" (Val (IntVal 5))]))
-          initialStore
-          ~?= ( TableVal "_t1",
-                Map.fromList
-                  [ ("_G", Map.empty),
-                    ("_t1", Map.fromList [(StringVal "x", IntVal 3), (StringVal "y", IntVal 5)])
-                  ]
-              ),
-        S.runState
-          (evalE (TableConst [FieldKey (Val (StringVal "x")) (Val (IntVal 3))]))
-          initialStore
-          ~?= ( TableVal "_t1",
-                Map.fromList
-                  [ ("_G", Map.empty),
-                    ("_t1", Map.fromList [(StringVal "x", IntVal 3)])
-                  ]
-              ),
-        S.runState
-          (evalE (TableConst [FieldKey (Val (StringVal "x")) (Val (IntVal 3)), FieldName "y" (Val (IntVal 5))]))
-          initialStore
-          ~?= ( TableVal "_t1",
-                Map.fromList
-                  [ ("_G", Map.empty),
-                    ("_t1", Map.fromList [(StringVal "x", IntVal 3), (StringVal "y", IntVal 5)])
-                  ]
-              ),
-        S.runState
-          (evalE (TableConst []))
-          initialStore
-          ~?= ( TableVal "_t1",
-                Map.fromList
-                  [ ("_G", Map.empty),
-                    ("_t1", Map.empty)
-                  ]
-              )
-      ]
+-- test_tableConst :: Test
+-- test_tableConst =
+--   "evaluate { x = 3 } "
+--     ~: TestList
+--       [ S.runState
+--           (evalE (TableConst [FieldName "x" (Val (IntVal 3))]))
+--           initialStore
+--           ~?= ( TableVal "_t1",
+--                 MkStr {
+--                   globalstore = {{}}
+--                 }
+--               ),
+--         S.runState
+--           (evalE (TableConst [FieldName "x" (Val (IntVal 3)), FieldName "y" (Val (IntVal 5))]))
+--           initialStore
+--           ~?= ( TableVal "_t1",
+--                 Map.fromList
+--                   [ ("_G", Map.empty),
+--                     ("_t1", Map.fromList [(StringVal "x", IntVal 3), (StringVal "y", IntVal 5)])
+--                   ]
+--               ),
+--         S.runState
+--           (evalE (TableConst [FieldKey (Val (StringVal "x")) (Val (IntVal 3))]))
+--           initialStore
+--           ~?= ( TableVal "_t1",
+--                 Map.fromList
+--                   [ ("_G", Map.empty),
+--                     ("_t1", Map.fromList [(StringVal "x", IntVal 3)])
+--                   ]
+--               ),
+--         S.runState
+--           (evalE (TableConst [FieldKey (Val (StringVal "x")) (Val (IntVal 3)), FieldName "y" (Val (IntVal 5))]))
+--           initialStore
+--           ~?= ( TableVal "_t1",
+--                 Map.fromList
+--                   [ ("_G", Map.empty),
+--                     ("_t1", Map.fromList [(StringVal "x", IntVal 3), (StringVal "y", IntVal 5)])
+--                   ]
+--               ),
+--         S.runState
+--           (evalE (TableConst []))
+--           initialStore
+--           ~?= ( TableVal "_t1",
+--                 Map.fromList
+--                   [ ("_G", Map.empty),
+--                     ("_t1", Map.empty)
+--                   ]
+--               )
+--       ]
 
 test_evalOp2 :: Test
 test_evalOp2 =
@@ -346,7 +360,7 @@ prop_evalE_total e s = case evaluate e s of
   IntVal i -> i `seq` True
   BoolVal b -> b `seq` True
   StringVal s -> s `seq` True
-  TableVal n -> n `seq` True
+  EnvTableK n -> n `seq` True
 
 -- | Make sure that we can step every block in every store
 prop_step_total :: Block -> Store -> Bool

@@ -235,7 +235,7 @@ instance PP Value where
   -- pp (TableVal t) = PP.text "<" <> PP.text t <> PP.text ">"
   pp (Table t) = PP.braces (PP.sep (PP.punctuate PP.comma (map pp (Map.toList t))))
   pp (EnvTableK key) = PP.text key
-  pp (FRef r) = PP.text "function reference: " <> PP.text r
+  pp (FRef r) = PP.text r
 
 isBase :: Expression -> Bool
 isBase TableConst {} = True
