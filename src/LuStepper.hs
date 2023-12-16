@@ -57,13 +57,11 @@ index (TableRef (eref, tkey)) = do
   s <- S.get
   case Map.lookup eref (env s) of
     Just gkey -> case Map.lookup gkey (globalstore s) of
-      Just (TableName name) -> case Map.lookup name (globalstore s) of
-        Just (Table t) -> case Map.lookup tkey t of
-          Just v -> return v
-          _ -> return NilVal
-        _ -> error "table name does not map to a table"
-      _ -> error "mapping exists in env but not in globalstore"
-    Nothing -> return NilVal
+      Just (Table t) -> case Map.lookup tkey t of
+        Just v -> return v
+        _ -> return NilVal
+      _ -> error "table reference did not map to a table in the global store"
+    _ -> error "mapping exists in env but not in globalstore"
 index NoRef = return NilVal
 
 update :: Reference -> Value -> StateT Store IO ()
@@ -105,13 +103,13 @@ resolveVar (Name name) = return $ Ref name
 resolveVar (Dot exp name) = do
   v <- evalE exp
   case v of
-    TableName t -> do return $ TableRef (t, StringVal name)
+    EnvTableK k -> do return $ TableRef (k, StringVal name)
     _ -> return NoRef
 resolveVar (Proj exp1 exp2) = do
   v1 <- evalE exp1
   v2 <- evalE exp2
   case v1 of
-    TableName t -> return $ TableRef (t, v2)
+    EnvTableK k -> return $ TableRef (k, v2)
     _ -> return NoRef
 
 -- | lookup closure in fstore
@@ -142,17 +140,29 @@ tableFieldToValue (FieldKey exp1 exp2) = do
 allocateTable :: [(Value, Value)] -> StateT Store IO Value
 allocateTable assocs = do
   store <- S.get
-  -- make a fresh name for the new table
-  let n = length (Map.keys $ globalstore store)
-  let kTable = "_t" ++ show n
-  let kTableName = "_v" ++ show (n + 1)
+  let glength = length (Map.keys $ globalstore store)
+  -- string to access Table
+  let gKey2Table = "_t" ++ show glength
+
+  -- string to access environment entry
+  let gKey2Env = "_v" ++ show (glength + 1)
+  let elength = length (Map.keys $ env store)
+
+  -- environment entry for the table
+  let eKey2Table = "_tenv" ++ show (elength + 1)
   -- make sure we don't have a nil key or value
   let assocs' = filter nonNil assocs
   -- update the store
-  S.put store {globalstore = Map.insert kTable (Table $ Map.fromList assocs') (globalstore store)}
+  S.put store {globalstore = Map.insert gKey2Table (Table $ Map.fromList assocs') (globalstore store)}
   store' <- S.get
-  S.put store {globalstore = Map.insert kTableName (TableName kTable) (globalstore store')}
-  return (TableName kTableName)
+  -- lift $ putStrLn (pretty $ globalstore store')
+  -- S.put store' {globalstore = Map.insert gKey2Env (EnvTableK eKey2Table) (globalstore store')}
+  -- store'' <- S.get
+  -- lift $ putStrLn (pretty $ globalstore store'')
+  S.put store' {env = Map.insert eKey2Table gKey2Table (env store')}
+  -- store''' <- S.get
+  -- lift $ putStrLn (pretty $ env store''')
+  return (EnvTableK eKey2Table)
 
 -- | Expression evaluator
 evalE :: Expression -> StateT Store IO Value
@@ -234,11 +244,13 @@ setEnv [] [] fstr = return fstr
 evalOp1 :: Uop -> Value -> StateT Store IO Value
 evalOp1 Neg (IntVal v) = return $ IntVal $ negate v
 evalOp1 Len (StringVal v) = return $ IntVal $ length v
-evalOp1 Len (TableName v) = do
+evalOp1 Len (EnvTableK k) = do
   s <- S.get
-  case Map.lookup v (globalstore s) of
-    Just (Table t) -> return $ IntVal $ Map.size t
-    _ -> error "tablename doesn't bind to valid table"
+  case Map.lookup k (env s) of
+    Just gkey -> case Map.lookup gkey (globalstore s) of
+      Just (Table t) -> return $ IntVal $ Map.size t
+      _ -> error "table reference did not map to a table in the globalstore"
+    _ -> error "dangling pointer from env to globalstore "
 evalOp1 Len iv@(IntVal v) = return iv
 evalOp1 Len (BoolVal True) = return $ IntVal 1
 evalOp1 Len (BoolVal False) = return $ IntVal 0

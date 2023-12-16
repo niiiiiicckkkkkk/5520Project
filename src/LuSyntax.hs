@@ -60,7 +60,7 @@ data Value
   | IntVal Int -- 1
   | BoolVal Bool -- false, true
   | StringVal String -- "abd"
-  | TableName String -- <not used in source programs>
+  | EnvTableK String -- <not used in source programs>
   | Table (Map Value Value)
   | FRef Name -- index into the function store
   deriving (Eq, Show, Ord)
@@ -234,7 +234,7 @@ instance PP Value where
   pp (StringVal s) = PP.text ("\"" <> s <> "\"")
   -- pp (TableVal t) = PP.text "<" <> PP.text t <> PP.text ">"
   pp (Table t) = PP.braces (PP.sep (PP.punctuate PP.comma (map pp (Map.toList t))))
-  pp (TableName name) = PP.text name
+  pp (EnvTableK key) = PP.text key
   pp (FRef r) = PP.text "function reference: " <> PP.text r
 
 isBase :: Expression -> Bool
