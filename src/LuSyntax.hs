@@ -62,7 +62,7 @@ data Value
   | StringVal String -- "abd"
   | EnvTableK String -- <not used in source programs>
   | Table (Map Value Value)
-  | FRef Name -- index into the function store
+  | FRef String -- index into the function store
   deriving (Eq, Show, Ord)
 
 data Uop
@@ -373,6 +373,22 @@ genExp n =
   where
     n' = n `div` 2
 
+genCall :: Int -> Gen Call
+genCall n = do
+  len <- QC.elements [0 .. 3]
+  let args = take len <$> QC.infiniteListOf (genExp n')
+  Call <$> genVar n' <*> args
+  where
+    n' = n `div` 2
+
+genDef :: Int -> Gen Def
+genDef n = do
+  len <- QC.elements [0 .. 3]
+  let params = take len <$> QC.infiniteListOf genStringLit
+  Def <$> params <*> genBlock n'
+  where
+    n' = n `div` 2
+
 -- | Generate a list of fields in a table constructor epression.
 -- We limit the size of the table to avoid size blow up.
 genTableFields :: Int -> Gen [TableField]
@@ -424,6 +440,18 @@ instance Arbitrary Var where
     [Proj e1' e2 | e1' <- shrink e1]
       ++ [Proj e1 e2' | e2' <- shrink e2]
 
+instance Arbitrary Call where
+  arbitrary = QC.sized genCall
+  shrink (Call var args) = 
+    [Call v' args | v' <- shrink var]
+      ++ [Call var args' | args' <- shrink args]
+
+instance Arbitrary Def where
+  arbitrary = QC.sized genDef
+  shrink (Def params b) =
+    [Def p' b | p' <- shrink params]
+      ++ [Def params b' | b' <- shrink b]
+
 instance Arbitrary Statement where
   arbitrary = QC.sized genStatement
   shrink (Assign v e) =
@@ -446,7 +474,7 @@ instance Arbitrary Statement where
       ++ [Repeat b e' | e' <- shrink e]
   shrink (Return e) =
     [Return e' | e' <- shrink e]
-  shrink _ = undefined
+  shrink (CallSt c) = CallSt <$> shrink c
 
 -- | access the first statement in a block, if one exists
 first :: Block -> [Statement]
@@ -480,7 +508,8 @@ instance Arbitrary Expression where
       ++ [Op2 e1 o e2' | e2' <- shrink e2]
       ++ [e1, e2]
   shrink (TableConst fs) = concatMap getExp fs ++ (TableConst <$> shrink fs)
-  shrink _ = error "define expression shrink"
+  shrink (DefExp e) = DefExp <$> shrink e
+  shrink (CallExp c) = CallExp <$> shrink c
 
 instance Arbitrary Uop where
   arbitrary = QC.arbitraryBoundedEnum
@@ -505,6 +534,8 @@ instance Arbitrary Value where
   shrink (BoolVal b) = BoolVal <$> shrink b
   shrink NilVal = []
   shrink (StringVal s) = StringVal <$> shrinkStringLit s
-  -- shrink (TableVal _) = []
-  shrink (Table _) = error "define table shrink"
-  shrink (FRef _) = error "defined FRef shrink"
+  shrink (Table t) = 
+    let ls = Map.toList t in
+      Table . Map.fromList <$> shrink ls
+  shrink (FRef f) = FRef <$> shrinkStringLit f
+  shrink (EnvTableK e) = EnvTableK <$> shrinkStringLit e
