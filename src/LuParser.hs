@@ -169,7 +169,7 @@ fDefP :: Parser Def
 fDefP = Def <$> wsP (afterP "function" $ parens $ P.sepBy nameP (wsP (P.char ','))) <*> (blockP <* stringP "end")
 
 statementP :: Parser Statement
-statementP = wsP (assignP <|> ifP <|> whileP <|> emptyP <|> repeatP <|> returnP <|> CallSt <$> fCallP)
+statementP = wsP (assignP <|> ifP <|> whileP <|> emptyP <|> repeatP <|> returnP <|> fCallSt <|> fDefSt)
   where
     assignP :: Parser Statement
     assignP = Assign <$> varP <*> (stringP "=" *> expP)
@@ -183,6 +183,10 @@ statementP = wsP (assignP <|> ifP <|> whileP <|> emptyP <|> repeatP <|> returnP 
     repeatP = liftA2 Repeat (afterP "repeat" blockP) (afterP "until" expP)
     returnP :: Parser Statement
     returnP = Return <$> afterP "return" expP
+    fCallSt :: Parser Statement
+    fCallSt = CallSt <$> fCallP
+    fDefSt :: Parser Statement
+    fDefSt = liftA2 Assign (afterP "function" (Name <$> nameP)) $ DefExp <$> (Def <$> parens (P.sepBy nameP (wsP (P.char ','))) <*> (blockP <* stringP "end"))
 
 blockP :: Parser Block
 blockP = Block <$> many statementP

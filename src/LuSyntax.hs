@@ -442,7 +442,7 @@ instance Arbitrary Var where
 
 instance Arbitrary Call where
   arbitrary = QC.sized genCall
-  shrink (Call var args) = 
+  shrink (Call var args) =
     [Call v' args | v' <- shrink var]
       ++ [Call var args' | args' <- shrink args]
 
@@ -534,8 +534,8 @@ instance Arbitrary Value where
   shrink (BoolVal b) = BoolVal <$> shrink b
   shrink NilVal = []
   shrink (StringVal s) = StringVal <$> shrinkStringLit s
-  shrink (Table t) = 
-    let ls = Map.toList t in
-      Table . Map.fromList <$> shrink ls
+  shrink (Table t) =
+    let ls = Map.toList t
+     in Table . Map.fromList <$> shrink ls
   shrink (FRef f) = FRef <$> shrinkStringLit f
   shrink (EnvTableK e) = EnvTableK <$> shrinkStringLit e

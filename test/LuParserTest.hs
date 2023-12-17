@@ -156,6 +156,46 @@ test_stat =
           ~?= Right (Repeat (Block [Empty, Empty]) (Val (BoolVal False)))
       ]
 
+test_functioncall :: Test
+test_functioncall =
+  "parsing function calls"
+    ~: TestList
+      [ P.parse fCallP "f()" ~?= Right (Call (Name "f") []),
+        P.parse fCallP "_myfunction (1 + 1, x, g(3))"
+          ~?= Right
+            ( Call
+                (Name "_myfunction")
+                [ Op2 (Val $ IntVal 1) Plus (Val $ IntVal 1),
+                  Var $ Name "x",
+                  CallExp $ Call (Name "g") [Val $ IntVal 3]
+                ]
+            ),
+        P.parse fCallP "t.foo(\"bar\")" ~?= Right (Call (Dot (Var $ Name "t") "foo") []),
+        P.parse fCallP "t.foo[\"bar\"]({a = 3, [2] = \"two\"})"
+          ~?= Right
+            ( Call
+                (Proj (Var $ Dot (Var $ Name "t") "foo") (Var $ Name "bar"))
+                [TableConst [FieldName "a" (Val (IntVal 3)), FieldKey (Val (IntVal 2)) (Val $ StringVal "two")]]
+            )
+      ]
+
+test_functiondef :: Test
+test_functiondef =
+  "parsing function definitions"
+    ~: TestList
+      [ P.parse fDefP "function () end" ~?= Right (Def [] (Block [])),
+        P.parse fDefP "function (arg1, arg2) y = x + y\n return arg1\n end"
+          ~?= Right
+            ( Def
+                ["arg1", "arg2"]
+                ( Block
+                    [ Assign (Name "y") (Op2 (Var $ Name "x") Plus (Var $ Name "y")),
+                      Return $ Var $ Name "arg1"
+                    ]
+                )
+            )
+      ]
+
 test_all :: IO Counts
 test_all = runTestTT $ TestList [test_comb, test_value, test_exp, test_stat, tParseFiles]
 
