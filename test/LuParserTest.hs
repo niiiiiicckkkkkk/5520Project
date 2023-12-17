@@ -193,7 +193,9 @@ test_functiondef =
                       Return $ Var $ Name "arg1"
                     ]
                 )
-            )
+            ),
+        P.parse statementP "function foo(x)\n ; end"
+          ~?= Right (Assign (Name "foo") (DefExp $ Def ["x"] (Block [Empty])))
       ]
 
 test_all :: IO Counts
