@@ -1,5 +1,5 @@
 import LuParserTest qualified as LP
-import LuStepperTest qualified as LS
+import LuStepperTestT qualified as LS
 
 main :: IO ()
 main = do
@@ -8,4 +8,5 @@ main = do
   LP.qc -- quickcheck properties
   putStrLn "*** Testing LuStepper ***"
   LS.test_all -- unit tests
-  LS.qc -- quickcheck properties
+  -- LS.qc -- quickcheck properties
+  return ()

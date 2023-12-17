@@ -47,7 +47,6 @@ tableFromState tname = Map.lookup tname <$> S.get
 index :: Reference -> StateT Store IO Value
 index (Ref r) = do
   s <- S.get
-  -- lift $ putStrLn "in index"
   case Map.lookup r (env s) of
     Just k -> case Map.lookup k (globalstore s) of
       Just val -> return val
@@ -66,6 +65,7 @@ index NoRef = return NilVal
 
 update :: Reference -> Value -> StateT Store IO ()
 update (Ref eref) v' = do
+  -- lift $ putStrLn "in update"
   s <- S.get
   case Map.lookup eref $ env s of
     Nothing -> do
@@ -185,17 +185,18 @@ evalE c@(CallExp (Call v argexps)) = do
     Just cs -> do
       stepin <- lift promptYN
       fstr <- setEnv (extractArgnames . function $ cs) argexps s {env = fenv cs}
+      s' <- S.get
       S.put fstr {block = extractFunction . function $ cs}
       if stepin
         then do
-          S.put fstr {block = extractFunction . function $ cs}
+          S.put fstr {block = extractFunction . function $ cs, history = Just s}
           go
         else do
           evalB (extractFunction . function $ cs)
       returnS <- S.get
       let returned = pullReturn returnS
        in do
-            S.put returnS {block = block s, env = env s}
+            S.put returnS {block = block s', env = env s'}
             return returned
 evalE (DefExp (Def argnames block)) = do
   s <- S.get
@@ -226,7 +227,14 @@ setEnv :: [String] -> [Expression] -> Store -> StateT Store IO Store
 setEnv (n : ns) (e : es) fstr = do
   s <- S.get
   v <- evalE e
-  S.put fstr
+  case v of
+    EnvTableK k -> do
+      ref <- resolveVar (Name k)
+      t <- index ref
+      S.put fstr
+      update ref t
+    _ -> do
+      S.put fstr
   update (Ref n) v
   fstr' <- S.get
   S.put s
@@ -407,7 +415,7 @@ stepBackward = do
       S.put s'
       return False
     Nothing -> do
-      lift $ putStr "No History to revert..."
+      lift $ putStrLn "No History to revert..."
       return True
 
 stepBackwardN :: Int -> StateT Store IO ()

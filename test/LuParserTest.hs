@@ -194,8 +194,8 @@ test_functiondef =
                     ]
                 )
             ),
-        P.parse statementP "function foo(x)\n ; end"
-          ~?= Right (Assign (Name "foo") (DefExp $ Def ["x"] (Block [Empty])))
+        P.parse statementP "function foo(x)\n return\n end"
+          ~?= Right (Assign (Name "foo") (DefExp $ Def ["x"] (Block [Return $ Val NilVal])))
       ]
 
 test_all :: IO Counts

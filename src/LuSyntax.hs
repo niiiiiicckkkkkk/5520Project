@@ -38,7 +38,6 @@ data Statement
   | Empty -- ';'
   | Repeat Block Expression -- repeat s until e
   | Return Expression
-  | Exit
   | CallSt Call
   deriving (Eq, Show)
 

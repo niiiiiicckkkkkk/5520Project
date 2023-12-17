@@ -1,0 +1,41 @@
+ValueStore 
+    "GLOBAL" -> "t" -> "_t1"  
+    _t1 -- changed 
+    _t2
+    _f1
+
+functionStore   
+
+a v2 v3 
+
+global x = 5 
+
+f = function (a, b)
+    z = function(x)
+        return x * a
+    end 
+    c = z(b)
+    return a + c
+end 
+
+
+f(1, 2)
+
+1. create a new state 
+    - globals 
+    - a = 1 b = 2 (in local)
+2. runState block (TODO) new state 
+
+        add z as function to new state 
+
+** explicit global keyword for global definitions 
+** local table checked first 
+** idea 2: functions can only access global state and local (argument) variables
+** tables pass by reference everything else pass by value
+
+** function return -> delete local mappings and move forward with that as state
+
+
+t = {} 
+
+f(t)

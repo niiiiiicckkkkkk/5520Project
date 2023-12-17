@@ -6,3 +6,4 @@ fact = function(n, f)
     return f end
 fact(5, 1)
 y = 10
+z = 11

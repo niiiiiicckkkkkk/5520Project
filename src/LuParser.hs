@@ -184,7 +184,7 @@ statementP = wsP (assignP <|> ifP <|> whileP <|> emptyP <|> repeatP <|> returnP 
     returnP :: Parser Statement
     returnP = Return <$> afterP "return" expP
     exitP :: Parser Statement
-    exitP = constP "return" Exit
+    exitP = constP "return" (Return $ Val NilVal)
     fCallSt :: Parser Statement
     fCallSt = CallSt <$> fCallP
     fDefSt :: Parser Statement
