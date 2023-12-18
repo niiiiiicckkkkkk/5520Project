@@ -19,15 +19,20 @@ data Store = MkStr
     globalstore :: Map String Value,
     fstore :: FunctionStore,
     block :: Block,
-    history :: Maybe Store,
-    filename :: Maybe String
+    history :: History,
+    filename :: Maybe String,
+    status :: ExitStatus,
+    rerun :: Bool
   }
 
-initialStore :: Store = MkStr Map.empty Map.empty Map.empty mempty Nothing Nothing
+initialStore :: Store
+initialStore :: Store = MkStr Map.empty Map.empty Map.empty mempty NoHistory Nothing Running False
 
 -- type Table = Map Value Value
 
 type FunctionStore = Map Name Closure
+
+type Terminated = Bool
 
 data Closure = Closure {fenv :: Environment, function :: Function}
 
@@ -38,6 +43,17 @@ data Reference
   = Ref String
   | TableRef (String, Value)
   | NoRef
+
+-- | Control data
+data ExitStatus
+  = ExitSuccess
+  | ExitFailure
+  | Running
+
+data History
+  = NoHistory
+  | OutOfScope
+  | Previous Store
 
 {-
 tableFromState :: Name -> State Store (Maybe Table)
@@ -189,15 +205,23 @@ evalE c@(CallExp (Call v argexps)) = do
       S.put fstr {block = extractFunction . function $ cs}
       if stepin
         then do
-          S.put fstr {block = extractFunction . function $ cs, history = Just s}
-          go
+          S.put fstr {block = extractFunction . function $ cs, history = OutOfScope}
+          status <- go
+          case status of
+            Running -> do
+              returnS <- S.get
+              let returned = pullReturn returnS
+               in do
+                    S.put returnS {block = block s', env = env s'}
+                    return returned
+            _ -> S.put s {rerun = True} >> return NilVal
         else do
           evalB (extractFunction . function $ cs)
-      returnS <- S.get
-      let returned = pullReturn returnS
-       in do
-            S.put returnS {block = block s', env = env s'}
-            return returned
+          returnS <- S.get
+          let returned = pullReturn returnS
+           in do
+                S.put returnS {block = block s', env = env s'}
+                return returned
 evalE (DefExp (Def argnames block)) = do
   s <- S.get
   let len = length $ Map.keys (fstore s)
@@ -329,38 +353,70 @@ exec :: Block -> Store -> IO Store
 exec = S.execStateT . eval
 
 -- block to store (state after one statement)
-step :: Block -> StateT Store IO ()
+step :: Block -> StateT Store IO ExitStatus
 step (Block (call@(CallSt (Call v argexps)) : otherSs)) = do
   evalS call
   s <- S.get
-  S.put s {block = Block otherSs}
+  if rerun s
+    then do
+      S.modify (\s -> s {rerun = False})
+      return Running
+    else do
+      S.put s {block = Block otherSs}
+      return Running
 step (Block ((If e (Block ss1) (Block ss2)) : otherSs)) = do
   v <- evalE e
   s <- S.get
-  if toBool v
-    then S.put s {block = Block (ss1 ++ otherSs)}
-    else S.put s {block = Block (ss2 ++ otherSs)}
+  if rerun s
+    then do
+      S.modify (\s -> s {rerun = False})
+      return Running
+    else do
+      if toBool v
+        then S.put s {block = Block (ss1 ++ otherSs)}
+        else S.put s {block = Block (ss2 ++ otherSs)}
+      return Running
 step (Block (w@(While e (Block ss)) : otherSs)) = do
   v <- evalE e
   s <- S.get
-  if toBool v
-    then S.put s {block = Block (ss ++ [w] ++ otherSs)}
-    else S.put s {block = Block otherSs}
+  if rerun s
+    then do
+      S.modify (\s -> s {rerun = False})
+      return Running
+    else do
+      if toBool v
+        then S.put s {block = Block (ss ++ [w] ++ otherSs)}
+        else S.put s {block = Block otherSs}
+      return Running
 step (Block (a@(Assign v e) : otherSs)) = do
   evalS a
   s <- S.get
-  S.put s {block = Block otherSs}
+  if rerun s
+    then do
+      S.modify (\s -> s {rerun = False})
+      return Running
+    else do
+      S.put s {block = Block otherSs}
+      return Running
 step (Block ((Repeat b e) : otherSs)) = step (Block (While (Op1 Not e) b : otherSs))
 step (Block (r@(Return exp) : otherSs)) = do
   evalS r
   s <- S.get
-  S.put s {block = Block []}
+  if rerun s
+    then do
+      S.modify (\s -> s {rerun = False})
+      return Running
+    else do
+      S.put s {block = Block []}
+      return ExitSuccess
 step (Block (empty : otherSs)) = do
   s <- S.get
   S.put s {block = Block otherSs}
+  return Running
 step b@(Block []) = do
   s <- S.get
   S.put s {block = Block []}
+  return ExitSuccess
 
 -- | Evaluate this thread for a specified number of steps
 -- boundedStep :: Int -> Block -> StateT Store IO Block
@@ -384,47 +440,46 @@ step b@(Block []) = do
 -- execStep :: Block -> Store -> IO Store
 -- execStep b = S.execStateT (allStep b)
 
-stepForward :: StateT Store IO Bool
+stepForward :: StateT Store IO ExitStatus
 stepForward = do
   s <- S.get
-  step $ block s
+  status <- step $ block s
   s' <- S.get
-  S.put s' {history = Just s}
-  case block s' of
-    Block [] -> return False
-    _ -> return True
+  S.put s' {history = Previous s}
+  return status
 
 {-
   let (block', store') = steps 1 (block ss) (store ss)
    in do
     ss {block = block', store = store', history = Just ss}-}
 
-stepForwardN :: Int -> StateT Store IO Bool
-stepForwardN 0 = return True
+stepForwardN :: Int -> StateT Store IO Terminated
+stepForwardN 0 = return False
 stepForwardN n = do
-  rs <- stepForward
-  if rs
-    then stepForwardN (n - 1)
-    else return False
+  status <- stepForward
+  case status of
+    Running -> stepForwardN (n - 1)
+    _ -> return True
 
-stepBackward :: StateT Store IO Bool
+stepBackward :: StateT Store IO ExitStatus
 stepBackward = do
   s <- S.get
   case history s of
-    Just s' -> do
+    Previous s' -> do
       S.put s'
-      return False
-    Nothing -> do
+      return Running
+    OutOfScope -> return ExitFailure
+    NoHistory -> do
       lift $ putStrLn "No History to revert..."
-      return True
+      return Running
 
-stepBackwardN :: Int -> StateT Store IO ()
-stepBackwardN 0 = return ()
+stepBackwardN :: Int -> StateT Store IO Terminated
+stepBackwardN 0 = return False
 stepBackwardN n = do
-  start <- stepBackward
-  if start
-    then return ()
-    else stepBackwardN (n - 1)
+  status <- stepBackward
+  case status of
+    Running -> stepBackwardN (n - 1)
+    _ -> return True
 
 promptYN :: IO Bool
 promptYN = do
@@ -434,7 +489,7 @@ promptYN = do
     ('y' : ss) -> return True
     _ -> return False
 
-go :: StateT Store IO ()
+go :: StateT Store IO ExitStatus
 go = do
   st <- S.get
   lift $ prompt st
@@ -458,7 +513,7 @@ go = do
       lift $ putStrLn (pretty $ env st)
       go
     -- quit the stepper
-    Just (":q", _) -> return ()
+    Just (":q", _) -> return ExitSuccess
     -- run current block to completion
     Just (":r", _) -> do
       evalB $ block st
@@ -470,9 +525,9 @@ go = do
             Just x -> x
             Nothing -> 1
        in do
-            rs <- stepForwardN numSteps
-            when rs $ do
-              go
+            terminated <- stepForwardN numSteps
+            s <- S.get
+            if terminated then return $ status s else go
     -- previous statement
     -- NOTE: this should revert steps of the evaluator not
     -- commands to the stepper. With :n 5 followed by :p
@@ -483,8 +538,8 @@ go = do
             Just x -> x
             Nothing -> 1
        in do
-            stepBackwardN numSteps
-            go
+            terminated <- stepBackwardN numSteps
+            if terminated then return ExitFailure else go
     -- evaluate an expression in the current state
     _ ->
       case LuParser.parseStatement str of
