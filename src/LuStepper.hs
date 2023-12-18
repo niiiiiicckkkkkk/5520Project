@@ -211,13 +211,14 @@ evalE c@(CallExp (Call v argexps)) = do
           S.put fstr {block = extractFunction . function $ cs, history = OutOfScope}
           status <- go
           case status of
-            Running -> do
+            ExitSuccess -> do
               returnS <- S.get
               let returned = pullReturn returnS
                in do
                     S.put returnS {block = block s', env = env s'}
                     return returned
-            _ -> S.put s {rerun = True} >> return NilVal
+            ExitFailure -> S.put s {rerun = True} >> return NilVal
+            Running -> error "terminated function cannot be running"
         else do
           evalB (extractFunction . function $ cs)
           returnS <- S.get
@@ -462,7 +463,8 @@ stepForwardN n = do
   status <- stepForward
   case status of
     Running -> stepForwardN (n - 1)
-    _ -> return True
+    ExitSuccess -> return True
+    ExitFailure -> error "exited function backwards via :n"
 
 stepBackward :: StateT Store IO ExitStatus
 stepBackward = do
@@ -482,7 +484,8 @@ stepBackwardN n = do
   status <- stepBackward
   case status of
     Running -> stepBackwardN (n - 1)
-    _ -> return True
+    ExitFailure -> return True
+    ExitSuccess -> error "exited function forward via :p"
 
 promptYN :: IO Bool
 promptYN = do
@@ -504,10 +507,10 @@ go = do
       parseResult <- lift $ LuParser.parseLuFile fn
       case parseResult of
         (Left _) -> do
-          lift $ putStr "Failed to parse file"
+          lift $ putStrLn "Failed to parse file"
           go
         (Right b) -> do
-          lift $ putStr ("Loaded " ++ fn ++ ", initializing stepper\n")
+          lift $ putStrLn ("Loaded " ++ fn ++ ", initializing stepper")
           S.put st {filename = Just fn, block = b}
           go
     -- dump the store
@@ -520,7 +523,7 @@ go = do
     -- run current block to completion
     Just (":r", _) -> do
       evalB $ block st
-      go
+      return ExitSuccess
     -- next statement (could be multiple)
     Just (":n", strs) -> do
       let numSteps :: Int
@@ -529,8 +532,7 @@ go = do
             Nothing -> 1
        in do
             terminated <- stepForwardN numSteps
-            s <- S.get
-            if terminated then return $ status s else go
+            if terminated then return ExitSuccess else go
     -- previous statement
     -- NOTE: this should revert steps of the evaluator not
     -- commands to the stepper. With :n 5 followed by :p
