@@ -24,6 +24,7 @@ data Store = MkStr
     status :: ExitStatus,
     rerun :: Bool
   }
+  deriving (Show)
 
 initialStore :: Store
 initialStore :: Store = MkStr Map.empty Map.empty Map.empty mempty NoHistory Nothing Running False
@@ -34,9 +35,9 @@ type FunctionStore = Map Name Closure
 
 type Terminated = Bool
 
-data Closure = Closure {fenv :: Environment, function :: Function}
+data Closure = Closure {fenv :: Environment, function :: Function} deriving (Show)
 
-data Function = Function [String] Block
+data Function = Function [String] Block deriving (Show)
 
 -- reference into the environment
 data Reference
@@ -49,11 +50,13 @@ data ExitStatus
   = ExitSuccess
   | ExitFailure
   | Running
+  deriving (Show)
 
 data History
   = NoHistory
   | OutOfScope
   | Previous Store
+  deriving (Show)
 
 {-
 tableFromState :: Name -> State Store (Maybe Table)
