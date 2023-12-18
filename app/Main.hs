@@ -57,14 +57,14 @@ f s (r, v) = update r v >> S.get >>= \s' -> return s'
 
 main :: IO ()
 main = do
-  -- hSetBuffering stdout NoBuffering
-  -- evalStateT go initialStore
-  -- return ()
-
-  ls <- QC.sample' (QC.arbitrary :: QC.Gen (StateT Store IO Store))
-  ls' <- mapM (\st -> S.runStateT st initialStore) ls
-  mapM (\(_, s) -> putStrLn (pretty $ globalstore s)) ls'
+  hSetBuffering stdout NoBuffering
+  evalStateT go initialStore
   return ()
+
+  -- ls <- QC.sample' (QC.arbitrary :: QC.Gen (StateT Store IO Store))
+  -- ls' <- mapM (\st -> S.runStateT st initialStore) ls
+  -- mapM (\(_, s) -> putStrLn (pretty $ globalstore s)) ls'
+  -- return ()
 
 -- print $ map (\state -> aux state) ls
 -- (_, s) <- S.runStateT (head ls) initialStore
