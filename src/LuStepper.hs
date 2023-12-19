@@ -85,7 +85,6 @@ index NoRef = return NilVal
 
 update :: Reference -> Value -> StateT Store IO ()
 update (Ref eref) v' = do
-  -- lift $ putStrLn "in update"
   s <- S.get
   case Map.lookup eref $ env s of
     Nothing -> do
@@ -98,7 +97,6 @@ update (Ref eref) v' = do
     updateVar r v' s = s {globalstore = Map.insert r v' $ globalstore s}
 update (TableRef (eref, tkey)) v' = do
   s <- S.get
-  lift $ putStrLn "in update" >> putStrLn (pretty eref) >> putStrLn (pretty tkey) >> putStrLn (pretty v')
   case Map.lookup eref $ env s of
     Nothing -> return ()
     Just gref ->
@@ -411,7 +409,6 @@ step (Block (w@(While e (Block ss)) : otherSs)) = do
       S.modify (\s -> s {rerun = False})
       S.get >>= \safter -> return $ checkEmpty $ block safter
     else do
-      lift $ putStrLn "in while loop"
       if toBool v
         then S.put s {block = Block (ss ++ [w] ++ otherSs)}
         else S.put s {block = Block otherSs}
@@ -512,7 +509,7 @@ stepBackwardN n = do
 
 promptYN :: IO Bool
 promptYN = do
-  putStr "step in? (y / n)"
+  putStr "step in? (y / n) "
   str <- getLine
   case str of
     ('y' : ss) -> return True

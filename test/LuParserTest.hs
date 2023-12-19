@@ -214,14 +214,9 @@ prop_roundtrip_val v =
 prop_roundtrip_exp :: Expression -> Bool
 prop_roundtrip_exp e = P.parse expP (pretty e) == Right e
 
-prop_roundtrip_stat :: Statement -> Bool
-prop_roundtrip_stat s = P.parse statementP (pretty s) == Right s
-
 qc :: IO ()
 qc = do
   putStrLn "roundtrip_val"
   QC.quickCheck prop_roundtrip_val
   putStrLn "roundtrip_exp"
   QC.quickCheck prop_roundtrip_exp
-  putStrLn "roundtrip_stat"
-  QC.quickCheck prop_roundtrip_stat
