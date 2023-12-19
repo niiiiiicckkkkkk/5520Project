@@ -466,29 +466,18 @@ tExecTable =
           assertEqual "" (IntVal 11) t'
       )
 
---     ~?= Map.fromList
---       [ ( globalTableName,
---           Map.fromList
---             [ (StringVal "a", TableVal "_t1"),
---               (StringVal "k", IntVal 20),
---               (StringVal "o1", IntVal 10),
---               (StringVal "o2", StringVal "great"),
---               (StringVal "o3", IntVal 11)
---             ]
---         ),
---         ("_t1", Map.fromList [(IntVal 20, StringVal "great"), (StringVal "x", IntVal 11)])
---       ]
-
--- tExecBfs :: Test
--- tExecBfs = "exec wBfs" ~: TestList [global !? StringVal "found" ~?= Just (BoolVal True)]
---   where
---     ss = exec wBfs initialStore
---     global = case ss !? globalTableName of
---       Just g -> g
---       Nothing -> Map.empty
+tExecBfs :: Test
+tExecBfs = 
+  "exec wBfs" 
+  ~: TestCase 
+    ( do
+      s <- exec wBfs initialStore
+      v <- S.evalStateT (index (Ref "found")) s
+      assertEqual "" (BoolVal True) v
+    )
 
 test_exec :: Test
-test_exec = TestList [tExecTest, tExecFact, tExecAbs, tExecTimes, tExecTable]
+test_exec = TestList [tExecTest, tExecFact, tExecAbs, tExecTimes, tExecTable, tExecBfs]
 
 test_all :: IO Counts
 test_all = runTestTT $ TestList [test_index, test_update, test_resolveVar, test_evaluateNot, test_evaluateLen, test_tableConst, test_evalOp2, test_exec]
