@@ -44,6 +44,7 @@ data Reference
   = Ref String
   | TableRef (String, Value)
   | NoRef
+  deriving (Eq, Show)
 
 -- | Control data
 data ExitStatus
@@ -215,8 +216,15 @@ evalE c@(CallExp (Call v argexps)) = do
               returnS <- S.get
               let returned = pullReturn returnS
                in do
-                    S.put returnS {block = block s', env = env s'}
-                    return returned
+                    case returned of
+                      EnvTableK k -> do
+                        t <- index (Ref k)
+                        S.put returnS {block = block s', env = env s'}
+                        update (Ref k) t
+                        return returned
+                      _ -> do
+                        S.put returnS {block = block s', env = env s'}
+                        return returned
             ExitFailure -> S.put s {rerun = True} >> return NilVal
             Running -> error "terminated function cannot be running"
         else do
@@ -224,8 +232,15 @@ evalE c@(CallExp (Call v argexps)) = do
           returnS <- S.get
           let returned = pullReturn returnS
            in do
-                S.put returnS {block = block s', env = env s'}
-                return returned
+                case returned of
+                  EnvTableK k -> do
+                    t <- index (Ref k)
+                    S.put returnS {block = block s', env = env s'}
+                    update (Ref k) t
+                    return returned
+                  _ -> do
+                    S.put returnS {block = block s', env = env s'}
+                    return returned
 evalE (DefExp (Def argnames block)) = do
   s <- S.get
   let len = length $ Map.keys (fstore s)
@@ -364,44 +379,44 @@ step (Block (call@(CallSt (Call v argexps)) : otherSs)) = do
   if rerun s
     then do
       S.modify (\s -> s {rerun = False})
-      return Running
+      return $ checkEmpty otherSs
     else do
       S.put s {block = Block otherSs}
-      return Running
+      return $ checkEmpty otherSs
 step (Block ((If e (Block ss1) (Block ss2)) : otherSs)) = do
   v <- evalE e
   s <- S.get
   if rerun s
     then do
       S.modify (\s -> s {rerun = False})
-      return Running
+      return $ checkEmpty otherSs
     else do
       if toBool v
         then S.put s {block = Block (ss1 ++ otherSs)}
         else S.put s {block = Block (ss2 ++ otherSs)}
-      return Running
+      return $ checkEmpty otherSs
 step (Block (w@(While e (Block ss)) : otherSs)) = do
   v <- evalE e
   s <- S.get
   if rerun s
     then do
       S.modify (\s -> s {rerun = False})
-      return Running
+      return $ checkEmpty otherSs
     else do
       if toBool v
         then S.put s {block = Block (ss ++ [w] ++ otherSs)}
         else S.put s {block = Block otherSs}
-      return Running
+      return $ checkEmpty otherSs
 step (Block (a@(Assign v e) : otherSs)) = do
   evalS a
   s <- S.get
   if rerun s
     then do
       S.modify (\s -> s {rerun = False})
-      return Running
+      return $ checkEmpty otherSs
     else do
       S.put s {block = Block otherSs}
-      return Running
+      return $ checkEmpty otherSs
 step (Block ((Repeat b e) : otherSs)) = step (Block (While (Op1 Not e) b : otherSs))
 step (Block (r@(Return exp) : otherSs)) = do
   evalS r
@@ -409,18 +424,17 @@ step (Block (r@(Return exp) : otherSs)) = do
   if rerun s
     then do
       S.modify (\s -> s {rerun = False})
-      return Running
-    else do
-      S.put s {block = Block []}
-      return ExitSuccess
+      return $ checkEmpty otherSs
+    else return ExitSuccess
 step (Block (empty : otherSs)) = do
   s <- S.get
   S.put s {block = Block otherSs}
-  return Running
-step b@(Block []) = do
-  s <- S.get
-  S.put s {block = Block []}
-  return ExitSuccess
+  return $ checkEmpty otherSs
+step b@(Block []) = return ExitSuccess
+
+checkEmpty :: [Statement] -> ExitStatus
+checkEmpty [] = ExitSuccess
+checkEmpty _ = Running
 
 -- | Evaluate this thread for a specified number of steps
 -- boundedStep :: Int -> Block -> StateT Store IO Block
@@ -489,7 +503,7 @@ stepBackwardN n = do
 
 promptYN :: IO Bool
 promptYN = do
-  putStrLn "step in? (y / n)"
+  putStr "step in? (y / n)"
   str <- getLine
   case str of
     ('y' : ss) -> return True

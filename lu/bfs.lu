@@ -1,3 +1,44 @@
+function bfs(start, goal, graph)
+  steps = -1
+  ;
+  q = { elements = {}, first = 0, last = 0}
+  q.elements[q.last] = start
+  q.last = q.last + 1
+  ;
+  visited = {}
+  visited[start] = true
+  found = false
+  ;
+  repeat 
+    steps = steps + 1
+    node = q.elements[q.first]
+    q.elements[q.first] = nil
+    q.first = q.first + 1
+    ; 
+    visited[node] = true
+    if goal == node then
+      found = true
+      q.first = q.last
+    else 
+      i = 1
+      while i <= # graph[node] do 
+        next = graph[node][i]
+        if not visited[next] then
+          q.elements[q.last] = next
+          q.last = q.last + 1
+          else
+          ;
+        end
+        i = i + 1
+      end
+    end 
+  until
+    q.last - q.first == 0
+  ;
+  return {["steps"] = steps, ["found"] = found}
+end 
+
+
 start = 1
 goal = 10
 ;
@@ -15,35 +56,10 @@ graph[10] = {[1] = 5}
 graph[11] = {[1] = 7}
 graph[12] = {[1] = 7}
 ;
-q = { elements = {}, first = 0, last = 0}
-q.elements[q.last] = start
-q.last = q.last + 1
 ;
-visited = {}
-visited[start] = true
-found = false
+results = bfs(start, goal, graph)
+x = results.steps 
+y = results.found 
+; 
 ;
-repeat 
-  node = q.elements[q.first]
-  q.elements[q.first] = nil
-  q.first = q.first + 1
-  ; 
-  visited[node] = true
-  if goal == node then
-    found = true
-    q.first = q.last
-  else 
-    i = 1
-    while i <= # graph[node] do 
-      next = graph[node][i]
-      if not visited[next] then
-        q.elements[q.last] = next
-        q.last = q.last + 1
-        else
-        ;
-      end
-      i = i + 1
-    end
-  end 
-until
-  q.last - q.first == 0
+;

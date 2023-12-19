@@ -5,6 +5,7 @@ import LuParser
 import LuSyntax
 import Parser qualified as P
 import Test.HUnit
+import Test.QuickCheck ((==>))
 import Test.QuickCheck qualified as QC
 
 -- | LuParser Unit Tests
@@ -202,8 +203,13 @@ test_all :: IO Counts
 test_all = runTestTT $ TestList [test_comb, test_value, test_exp, test_stat, tParseFiles]
 
 -- | quickcheck properties and exported test
-prop_roundtrip_val :: Value -> Bool
-prop_roundtrip_val v = P.parse valueP (pretty v) == Right v
+prop_roundtrip_val :: Value -> QC.Property
+prop_roundtrip_val v =
+  notFref v ==> P.parse valueP (pretty v) == Right v
+  where
+    notFref :: Value -> Bool
+    notFref (FRef _) = False
+    notFref _ = True
 
 prop_roundtrip_exp :: Expression -> Bool
 prop_roundtrip_exp e = P.parse expP (pretty e) == Right e

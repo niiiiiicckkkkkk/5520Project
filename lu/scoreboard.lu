@@ -1,0 +1,19 @@
+function initScore (teamname) 
+    total = 0
+    data = {name = teamname, total = 0}
+    data.touchdown = function () total = total + 6 end 
+    data.fieldgoal = function () total = total + 3 end 
+    data.extrapoint = function () total = total + 1 end 
+    data.safety = function () total = total + 2 end 
+    data.score = function () return total end 
+    return data 
+end
+
+t1 = initScore ("Eagles")
+t1.touchdown()
+t1.extrapoint()
+t1.fieldgoal()
+y = t1.score() 
+;
+;
+;

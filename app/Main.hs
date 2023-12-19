@@ -5,25 +5,30 @@ import Control.Monad.State (StateT, evalStateT, execStateT, runStateT)
 import Control.Monad.State qualified as S
 import Data.List ((!!))
 import Data.List qualified as List
+import Data.Map ((!))
 import Data.Map qualified as Map
 import Data.Maybe (fromMaybe)
 import LuParser (parseLuExp, parseLuFile, parseStatement)
 import LuStepper
   ( Reference (Ref),
     Store (MkStr, block, env, fstore, globalstore),
+    allocateTable,
+    evalE,
+    evalS,
     evaluate,
     evaluateS,
     exec,
     go,
+    index,
     initialStore,
+    setEnv,
     stepBackwardN,
     stepForwardN,
     update,
   )
-import LuSyntax
-import LuSyntax (Block (Block), pretty)
+import LuSyntax (Block (Block), Expression (Val), Value (EnvTableK, NilVal, Table), genStringLit, pretty)
 import System.IO (BufferMode (NoBuffering), hSetBuffering, stdout)
-import Test.QuickCheck (Gen, arbitrary, ioProperty, property, sample, sample')
+import Test.QuickCheck (Gen, arbitrary, ioProperty, property, sample, sample', (==>))
 import Test.QuickCheck qualified as QC
 import Test.QuickCheck.Monadic qualified as QM
 import Text.Read (readMaybe)
@@ -59,13 +64,48 @@ prop_updates_bound state = do
       let store = globalstore s
       return $ Map.foldr (\a b -> Map.member a store && b) True e
 
-prop_updateOverwrite :: StateT Store IO Store -> QC.Property
-prop_updateOverwrite state = do
-  QM.monadicIO (test state)
+prop_updateOverwrite ::
+  StateT Store IO Store ->
+  String ->
+  Value ->
+  Value ->
+  QC.Property
+prop_updateOverwrite state r v v' = do
+  QM.monadicIO (test state (Ref r) v v')
   where
-    test :: StateT Store IO Store -> QM.PropertyM IO Bool
-    test st = QM.run $ do
-      return False
+    test :: StateT Store IO Store -> Reference -> Value -> Value -> QM.PropertyM IO Bool
+    test st r v v' = QM.run $ do
+      (_, s) <- S.runStateT st initialStore
+      (_, s') <- S.runStateT (update r v) s
+      (_, s'') <- S.runStateT (update r v') s'
+      (value, _) <- S.runStateT (index r) s''
+      return (value == v')
+
+prop_argsBound :: StateT Store IO Store -> [String] -> [Value] -> QC.Property
+prop_argsBound state ss vs = QM.monadicIO (test state ss (Val <$> filter (/= NilVal) vs))
+  where
+    test :: StateT Store IO Store -> [String] -> [Expression] -> QM.PropertyM IO Bool
+    test st args vs = QM.run $ do
+      (_, s) <- S.runStateT st initialStore
+      (fstr, _) <- S.runStateT (setEnv args vs initialStore) s
+      let fenv = env fstr
+       in return $ foldr (\name acc -> Map.member name fenv && acc) True args
+
+prop_tableSound :: StateT Store IO Store -> [Value] -> [Value] -> QC.Property
+prop_tableSound state keys vals = QM.monadicIO (test state (zip keys vals))
+  where
+    test :: StateT Store IO Store -> [(Value, Value)] -> QM.PropertyM IO Bool
+    test st assocs = QM.run $ do
+      (_, s) <- S.runStateT st initialStore
+      (v, s') <- S.runStateT (allocateTable assocs) s
+      case v of
+        EnvTableK k -> do
+          (tbl, s'') <- S.runStateT (index (Ref k)) s'
+          case tbl of
+            Table table -> return $ foldr (\(key, val) acc -> (table ! key == val) && acc) False (filter ((/= NilVal) . fst) assocs)
+            _ -> return False
+          return True
+        _ -> return False
 
 -- do
 -- (_, s) <- S.runStateT state initialStore
@@ -85,12 +125,22 @@ instance Show (StateT Store IO a) where
 
 main :: IO ()
 main = do
-  -- hSetBuffering stdout NoBuffering
-  -- evalStateT go initialStore
-  -- return ()
+  {-
+  hSetBuffering stdout NoBuffering
+  putStrLn "update"
+  evalStateT go initialStore
+  return ()-}
 
   -- ls <- QC.sample' (QC.arbitrary :: QC.Gen (StateT Store IO Store))
   -- ls' <- mapM (\st -> S.runStateT st initialStore) ls
   -- mapM (\(_, s) -> putStrLn (pretty $ globalstore s)) ls'
+
+  putStrLn "prop update bound"
   QC.quickCheck prop_updates_bound
+  putStrLn "prop argsBound"
+  QC.quickCheck prop_argsBound
+  putStrLn "prop updateOverwrite"
+  QC.quickCheck prop_updateOverwrite
+  putStrLn "prop tableSound"
+  QC.quickCheck prop_tableSound
   return ()

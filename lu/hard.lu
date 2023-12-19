@@ -1,0 +1,6 @@
+t = {a = 1, b = 2}
+function f(t)
+    t.a = 5
+    end
+f(t)
+y = t.a
