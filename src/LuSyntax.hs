@@ -12,8 +12,7 @@ import Text.PrettyPrint qualified as PP
 
 type Environment = Map String String
 
-newtype Thread = Thread [Block]
-  deriving (Eq, Show)
+data Function = Function [String] Block deriving (Show)
 
 newtype Block = Block [Statement] -- s1 ... sn
   deriving (Eq, Show)
@@ -23,13 +22,6 @@ instance Semigroup Block where
 
 instance Monoid Block where
   mempty = Block []
-
-instance Monoid Thread where
-  mempty = Thread []
-
-instance Semigroup Thread where
-  (<>) :: Thread -> Thread -> Thread
-  (<>) (Thread t1) (Thread t2) = Thread $ t1 ++ t2
 
 data Statement
   = Assign Var Expression -- x = e
@@ -237,6 +229,9 @@ instance PP Value where
   pp (EnvTableK key) = PP.text key
   pp (FRef r) = PP.text "function reference: " <> PP.text r
 
+instance PP Function where
+  pp (Function ss _) = pp (DefExp (Def ss (Block [])))
+
 isBase :: Expression -> Bool
 isBase TableConst {} = True
 isBase Val {} = True
@@ -269,7 +264,7 @@ instance PP Expression where
       ppPrec _ e' = pp e'
       ppParens b = if b then PP.parens else id
   pp (TableConst fs) = PP.braces (PP.sep (PP.punctuate PP.comma (map pp fs)))
-  pp (DefExp (Def args bk)) = PP.text "function" <+> PP.parens (PP.sep (PP.punctuate PP.comma (map pp args)))
+  pp (DefExp (Def args _)) = PP.text "function" <+> PP.parens (PP.sep (PP.punctuate PP.comma (map pp args)))
   pp (CallExp (Call v args)) = pp v <+> PP.parens (PP.sep (PP.punctuate PP.comma (map pp args)))
 
 instance PP TableField where

@@ -5,15 +5,14 @@ import Control.Monad.State (StateT)
 import Control.Monad.State qualified as S
 import Control.Monad.Trans (lift)
 import Data.List qualified as List
-import Data.Map (Map, (!?))
+import Data.Map (Map)
 import Data.Map qualified as Map
 import Data.Maybe (fromMaybe)
-import LuParser qualified
+import LuParser qualified as LP
 import LuSyntax
-import Test.HUnit (Counts, Test (..), runTestTT, (~:), (~?=))
-import Test.QuickCheck qualified as QC
 import Text.Read (readMaybe)
 
+-- | Store for the State Monad
 data Store = MkStr
   { env :: Environment,
     globalstore :: Map String Value,
@@ -29,41 +28,40 @@ data Store = MkStr
 initialStore :: Store
 initialStore :: Store = MkStr Map.empty Map.empty Map.empty mempty NoHistory Nothing Running False
 
--- type Table = Map Value Value
-
 type FunctionStore = Map Name Closure
 
 type Terminated = Bool
 
+-- | Closure holds the environment at function definition and a block of code
 data Closure = Closure {fenv :: Environment, function :: Function} deriving (Show)
 
-data Function = Function [String] Block deriving (Show)
-
--- reference into the environment
+-- Reference into the environment
 data Reference
   = Ref String
   | TableRef (String, Value)
   | NoRef
   deriving (Eq, Show)
 
--- | Control data
+-- | Status used to track `go`
 data ExitStatus
   = ExitSuccess
   | ExitFailure
   | Running
   deriving (Show)
 
+-- | Track previous store
 data History
   = NoHistory
   | OutOfScope
   | Previous Store
   deriving (Show)
 
-{-
-tableFromState :: Name -> State Store (Maybe Table)
-tableFromState tname = Map.lookup tname <$> S.get
--}
-
+-- | Given a reference to the environment index into the store and pull out the value
+-- Return NilVal when non-table variable not found
+-- Error when table environment key not found (checked in resolveVar)
+-- Ref (r :: String) pulls a key to the globalstore from the environment and references the value directly
+-- TableRef (envkey :: String, tablekey :: Value) calls lookup on the environment with the envkey to get the
+-- key corresponding to the correct table then tablekey is used to index into the table
 index :: Reference -> StateT Store IO Value
 index (Ref r) = do
   s <- S.get
@@ -83,6 +81,7 @@ index (TableRef (eref, tkey)) = do
     _ -> error "mapping exists in env but not in globalstore"
 index NoRef = return NilVal
 
+-- | Same logic as index but updates position with value
 update :: Reference -> Value -> StateT Store IO ()
 update (Ref eref) v' = do
   s <- S.get
@@ -106,6 +105,8 @@ update (TableRef (eref, tkey)) v' = do
         _ -> error "table value not found in globalstore"
 update NoRef _ = return ()
 
+-- | Given the store, envkey and globalkey and a value create a new mapping for a variable
+--   inside the provided store
 defineVar :: String -> String -> Value -> Store -> Store
 defineVar eref gref v' s =
   s
@@ -114,9 +115,7 @@ defineVar eref gref v' s =
     }
 
 -- | Convert a variable into a reference into the store.
--- Fails when the var is `t.x` or t[1] and `t` is not defined in the store
--- when the var is `2.y` or `nil[2]` (i.e. not a `TableVal`)
--- or when the var is t[nil]
+--   Return NoRef for Dot and Proj when LHS variable not found
 resolveVar :: Var -> StateT Store IO Reference
 resolveVar (Name name) = return $ Ref name
 resolveVar (Dot exp name) = do
@@ -131,7 +130,8 @@ resolveVar (Proj exp1 exp2) = do
     EnvTableK k -> return $ TableRef (k, v2)
     _ -> return NoRef
 
--- | lookup closure in fstore
+-- | Index the function store and extract the closure for a function if one exists
+--   Returns Nothing if called variable doesn't resolve to a function
 fLookup :: Expression -> StateT Store IO (Maybe Closure)
 fLookup (CallExp (Call var argexps)) = do
   s <- S.get
@@ -146,6 +146,7 @@ fLookup _ = return Nothing
 pullTables :: Environment -> [(String, String)]
 pullTables env = filter (List.isPrefixOf "_tenv" . fst) (Map.assocs env)
 
+-- | Add a list of mappings to a given environment
 insertTables :: [(String, String)] -> Environment -> Environment
 insertTables assocs env = List.foldr aux env assocs
   where
@@ -176,7 +177,6 @@ allocateTable assocs = do
   -- string to access environment entry
   let gKey2Env = "_v" ++ show (glength + 1)
   let elength = length (Map.keys $ env store)
-
   -- environment entry for the table
   let eKey2Table = "_tenv" ++ show (elength + 1)
   -- make sure we don't have a nil key or value
@@ -184,19 +184,13 @@ allocateTable assocs = do
   -- update the store
   S.put store {globalstore = Map.insert gKey2Table (Table $ Map.fromList assocs') (globalstore store)}
   store' <- S.get
-  -- lift $ putStrLn (pretty $ globalstore store')
-  -- S.put store' {globalstore = Map.insert gKey2Env (EnvTableK eKey2Table) (globalstore store')}
-  -- store'' <- S.get
-  -- lift $ putStrLn (pretty $ globalstore store'')
   S.put store' {env = Map.insert eKey2Table gKey2Table (env store')}
-  -- store''' <- S.get
-  -- lift $ putStrLn (pretty $ env store''')
   return (EnvTableK eKey2Table)
 
 -- | Expression evaluator
 evalE :: Expression -> StateT Store IO Value
 evalE (Var v) = do
-  ref <- resolveVar v -- see above
+  ref <- resolveVar v
   index ref
 evalE (Val v) = return v
 evalE (Op2 e1 o e2) = evalOp2 o <$> evalE e1 <*> evalE e2
@@ -215,7 +209,6 @@ evalE c@(CallExp (Call v argexps)) = do
       stepin <- lift promptYN
       fstr <- setEnv (extractArgnames . function $ cs) argexps s {env = fenv cs}
       s' <- S.get
-      lift $ print (pullTables (env s'))
       S.put fstr {env = insertTables (pullTables (env s')) (env fstr), block = extractFunction . function $ cs}
       if stepin
         then do
@@ -247,6 +240,8 @@ evalE (DefExp (Def argnames block)) = do
    in S.put s {fstore = Map.insert ref c (fstore s)}
   return (FRef ref)
 
+-- | Extract a return value from the store
+--   Returns NilVal if keyword `_return` is absent
 pullReturn :: Store -> Value
 pullReturn store = case Map.lookup "_return" (env store) of
   Nothing -> NilVal
@@ -263,7 +258,8 @@ extractArgnames (Function argnames block) = argnames
 extractStatements :: Block -> [Statement]
 extractStatements (Block s) = s
 
--- current env bindings + closure bindings + args
+-- | Set up a store for function calls
+--   Returns store with argument mappings evaluated within the current store
 setEnv :: [String] -> [Expression] -> Store -> StateT Store IO Store
 setEnv (n : ns) (e : es) fstr = do
   s <- S.get
@@ -271,7 +267,7 @@ setEnv (n : ns) (e : es) fstr = do
   case v of
     EnvTableK k -> do
       ref <- resolveVar (Name k)
-      if (Map.member k (env fstr))
+      if Map.member k (env fstr)
         then do
           S.put fstr
         else do
@@ -334,7 +330,7 @@ evaluateS :: Statement -> Store -> IO Store
 evaluateS st = S.execStateT $ evalS st
 
 -- | Determine whether a value should be interpreted as true or false when
--- used as a condition.
+--   used as a condition.
 toBool :: Value -> Bool
 toBool (BoolVal False) = False
 toBool NilVal = False
@@ -343,11 +339,12 @@ toBool _ = True
 eval :: Block -> StateT Store IO ()
 eval (Block ss) = mapM_ evalS ss
 
--- evalB :: Block -> StateT Store IO ()
--- evalB (Block ss) = mapM_ evalS ss
 evalB :: Block -> StateT Store IO ()
-evalB (Block []) = return ()
-evalB (Block (s : ss)) = evalS s >> evalB (Block ss)
+evalB (Block ss) = mapM_ evalS ss
+
+-- evalB :: Block -> StateT Store IO ()
+-- evalB (Block []) = return ()
+-- evalB (Block (s : ss)) = evalS s >> evalB (Block ss)
 
 -- | Statement evaluator
 evalS :: Statement -> StateT Store IO ()
@@ -360,13 +357,12 @@ evalS w@(While e b) = do
     evalB b
     evalS w
 evalS (Assign v e) = do
-  -- update global variable or table field v to value of e
   s <- S.get
   ref <- resolveVar v
   e' <- evalE e
   update ref e'
 evalS s@(Repeat b e) = evalS (While (Op1 Not e) b) -- keep evaluating block b until expression e is true
-evalS Empty = return () -- do nothing
+evalS Empty = return ()
 evalS (Return e) = do
   v <- evalE e
   update (Ref "_return") v
@@ -377,7 +373,9 @@ evalS (CallSt f@(Call v argexps)) = do
 exec :: Block -> Store -> IO Store
 exec = S.execStateT . eval
 
--- block to store (state after one statement)
+-- | Step one line through current block
+--   Return ExitSuccess if block empty after step
+--   Return Running if block non-empty after step
 step :: Block -> StateT Store IO ExitStatus
 step (Block (call@(CallSt (Call v argexps)) : otherSs)) = do
   evalS call
@@ -442,28 +440,6 @@ checkEmpty :: Block -> ExitStatus
 checkEmpty (Block []) = ExitSuccess
 checkEmpty (Block _) = Running
 
--- | Evaluate this thread for a specified number of steps
--- boundedStep :: Int -> Block -> StateT Store IO Block
--- boundedStep 0 b = return b
--- boundedStep _ b | blockFinal b = return b
--- boundedStep n b = step b >>= boundedStep (n - 1)
-
--- | Evaluate this thread for a specified number of steps, using the specified store
--- steps :: Int -> Block -> Store -> IO (Block, Store)
--- steps n block = S.runStateT (boundedStep n block)
-
--- | Is this block completely evaluated?
--- blockFinal :: Block -> Bool
--- blockFinal (Block []) = True
--- blockFinal _ = False
-
--- allStep :: Block -> StateT Store IO Block
--- allStep b | blockFinal b = return b
--- allStep b = step b >>= allStep
-
--- execStep :: Block -> Store -> IO Store
--- execStep b = S.execStateT (allStep b)
-
 stepForward :: StateT Store IO ExitStatus
 stepForward = do
   s <- S.get
@@ -472,11 +448,8 @@ stepForward = do
   S.put s' {history = Previous s}
   return status
 
-{-
-  let (block', store') = steps 1 (block ss) (store ss)
-   in do
-    ss {block = block', store = store', history = Just ss}-}
-
+-- | Run param: n steps within the current store or until the block is empty
+--   Return a indicator whether to terminate the stepper or continue prompting for input
 stepForwardN :: Int -> StateT Store IO Terminated
 stepForwardN 0 = return False
 stepForwardN n = do
@@ -498,6 +471,8 @@ stepBackward = do
       lift $ putStrLn "No History to revert..."
       return Running
 
+-- | Reverse param: n steps within the current store or exiting the current block
+--   Return a indicator whether to terminate the stepper or continue prompting for input
 stepBackwardN :: Int -> StateT Store IO Terminated
 stepBackwardN 0 = return False
 stepBackwardN n = do
@@ -507,6 +482,7 @@ stepBackwardN n = do
     ExitFailure -> return True
     ExitSuccess -> error "exited function forward via :p"
 
+-- | Ask user if they want to step into function
 promptYN :: IO Bool
 promptYN = do
   putStr "step in? (y / n) "
@@ -515,6 +491,7 @@ promptYN = do
     ('y' : ss) -> return True
     _ -> return False
 
+-- | Respond to commands from user
 go :: StateT Store IO ExitStatus
 go = do
   st <- S.get
@@ -524,7 +501,7 @@ go = do
   case List.uncons (words str) of
     -- load a file for stepping
     Just (":l", [fn]) -> do
-      parseResult <- lift $ LuParser.parseLuFile fn
+      parseResult <- lift $ LP.parseLuFile fn
       case parseResult of
         (Left _) -> do
           lift $ putStrLn "Failed to parse file"
@@ -534,9 +511,12 @@ go = do
           S.put st {filename = Just fn, block = b}
           go
     -- dump the store
-    Just (":d", _) -> do
+    Just (":dv", _) -> do
       lift $ putStrLn (pretty $ globalstore st)
       lift $ putStrLn (pretty $ env st)
+      go
+    Just (":d", _) -> do
+      lift $ dump st
       go
     -- quit the stepper
     Just (":q", _) -> return ExitSuccess
@@ -565,22 +545,57 @@ go = do
        in do
             terminated <- stepBackwardN numSteps
             if terminated then return ExitFailure else go
-    -- evaluate an expression in the current state
     _ ->
-      case LuParser.parseStatement str of
+      case LP.parseStatement str of
         Right stmt -> do
           evalS stmt
-          -- putStr "evaluated statement\n"
           go
         Left _s -> do
-          -- putStr "evaluated expression\n"
-          case LuParser.parseLuExp str of
+          case LP.parseLuExp str of
             Right exp -> do
               v <- evalE exp
               go
             Left _s -> do
               lift $ putStrLn "?"
               go
+
+printTableVal :: Value -> Store -> String
+printTableVal v st = case v of
+  EnvTableK k -> case Map.lookup k (env st) of
+    Just gkey -> case Map.lookup gkey (globalstore st) of
+      Just v' -> printTableVal v' st
+      Nothing -> ""
+    Nothing -> ""
+  v -> pretty v ++ "\n"
+
+dump :: Store -> IO ()
+dump st = putStrLn $ printaux st (Map.toList $ env st) ""
+  where
+    printaux :: Store -> [(String, String)] -> String -> String
+    printaux st ((ekey, gkey) : pairs) out =
+      if List.isPrefixOf "_tenv" ekey
+        then printaux st pairs out
+        else case Map.lookup gkey (globalstore st) of
+          Just (EnvTableK k) -> case Map.lookup k (env st) of
+            Just gkey' -> case Map.lookup gkey' (globalstore st) of
+              Just (Table t) ->
+                out
+                  ++ ekey
+                  ++ "   -->  \n"
+                  ++ "{\n"
+                  ++ List.foldr (\(k, v) acc -> acc ++ pretty k ++ " : " ++ printTableVal v st) "" (Map.toList t)
+                  ++ "}"
+                  ++ "\n"
+                  ++ printaux st pairs out
+              Just v -> out ++ ekey ++ "   -->  " ++ pretty v ++ "\n" ++ printaux st pairs out
+              Nothing -> out
+            Nothing -> out
+          Just (FRef r) -> case Map.lookup r (fstore st) of
+            Just cl -> out ++ ekey ++ "  -->  " ++ pretty (function cl) ++ "\n" ++ printaux st pairs out
+            Nothing -> out
+          Just val -> out ++ ekey ++ "  -->  " ++ pretty val ++ "\n" ++ printaux st pairs out
+          _ -> out
+    printaux st [] out = out
 
 prompt :: Store -> IO ()
 prompt st = case block st of

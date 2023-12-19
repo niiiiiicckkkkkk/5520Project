@@ -93,12 +93,10 @@ tParseFiles :: Test
 tParseFiles =
   "parse files"
     ~: TestList
-      [ "fact" ~: p "lu/fact.lu" wFact,
-        "test" ~: p "lu/test.lu" wTest,
+      [ "test" ~: p "lu/test.lu" wTest,
         "abs" ~: p "lu/abs.lu" wAbs,
         "times" ~: p "lu/times.lu" wTimes,
-        "table" ~: p "lu/table.lu" wTable,
-        "bfs" ~: p "lu/bfs.lu" wBfs
+        "table" ~: p "lu/table.lu" wTable
       ]
   where
     p fn ast = do

@@ -44,7 +44,6 @@ library
       LuStepper
       LuSyntax
       Parser 
-      State 
   hs-source-dirs:
       src
 

@@ -5,8 +5,6 @@ import Data.Char qualified as Char
 import LuSyntax
 import Parser (Parser)
 import Parser qualified as P
-import Test.HUnit (Assertion, Counts, Test (..), assert, runTestTT, (~:), (~?=))
-import Test.QuickCheck qualified as QC
 
 wsP :: Parser a -> Parser a
 wsP p = p <* many P.space
