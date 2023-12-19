@@ -98,6 +98,7 @@ update (Ref eref) v' = do
     updateVar r v' s = s {globalstore = Map.insert r v' $ globalstore s}
 update (TableRef (eref, tkey)) v' = do
   s <- S.get
+  lift $ putStrLn "in update" >> putStrLn (pretty eref) >> putStrLn (pretty tkey) >> putStrLn (pretty v')
   case Map.lookup eref $ env s of
     Nothing -> return ()
     Just gref ->
@@ -142,6 +143,16 @@ fLookup (CallExp (Call var argexps)) = do
     (FRef fref) -> return $ Map.lookup fref (fstore s)
     _ -> return Nothing
 fLookup _ = return Nothing
+
+-- | Pull Table References from the environment
+pullTables :: Environment -> [(String, String)]
+pullTables env = filter (List.isPrefixOf "_tenv" . fst) (Map.assocs env)
+
+insertTables :: [(String, String)] -> Environment -> Environment
+insertTables assocs env = List.foldr aux env assocs
+  where
+    aux :: (String, String) -> Environment -> Environment
+    aux (k, v) env = if Map.member k env then env else Map.insert k v env
 
 nonNil :: (Value, Value) -> Bool
 nonNil (_, NilVal) = False
@@ -206,41 +217,30 @@ evalE c@(CallExp (Call v argexps)) = do
       stepin <- lift promptYN
       fstr <- setEnv (extractArgnames . function $ cs) argexps s {env = fenv cs}
       s' <- S.get
-      S.put fstr {block = extractFunction . function $ cs}
+      lift $ print (pullTables (env s'))
+      S.put fstr {env = insertTables (pullTables (env s')) (env fstr), block = extractFunction . function $ cs}
       if stepin
         then do
-          S.put fstr {block = extractFunction . function $ cs, history = OutOfScope}
+          fstr' <- S.get
+          S.put fstr' {block = extractFunction . function $ cs, history = OutOfScope}
           status <- go
           case status of
             ExitSuccess -> do
               returnS <- S.get
               let returned = pullReturn returnS
                in do
-                    case returned of
-                      EnvTableK k -> do
-                        t <- index (Ref k)
-                        S.put returnS {block = block s', env = env s'}
-                        update (Ref k) t
-                        return returned
-                      _ -> do
-                        S.put returnS {block = block s', env = env s'}
-                        return returned
-            ExitFailure -> S.put s {rerun = True} >> return NilVal
+                    S.put returnS {block = block s', env = insertTables (pullTables $ env returnS) (env s')}
+                    return returned
+            ExitFailure -> do
+              S.put s {rerun = True} >> return NilVal
             Running -> error "terminated function cannot be running"
         else do
           evalB (extractFunction . function $ cs)
           returnS <- S.get
           let returned = pullReturn returnS
            in do
-                case returned of
-                  EnvTableK k -> do
-                    t <- index (Ref k)
-                    S.put returnS {block = block s', env = env s'}
-                    update (Ref k) t
-                    return returned
-                  _ -> do
-                    S.put returnS {block = block s', env = env s'}
-                    return returned
+                S.put returnS {block = block s', env = insertTables (pullTables $ env returnS) (env s')}
+                return returned
 evalE (DefExp (Def argnames block)) = do
   s <- S.get
   let len = length $ Map.keys (fstore s)
@@ -299,7 +299,8 @@ evalOp1 Len (EnvTableK k) = do
   s <- S.get
   case Map.lookup k (env s) of
     Just gkey -> case Map.lookup gkey (globalstore s) of
-      Just (Table t) -> return $ IntVal $ Map.size t
+      Just (Table t) -> do
+        return $ IntVal $ Map.size t
       _ -> error "table reference did not map to a table in the globalstore"
     _ -> error "dangling pointer from env to globalstore "
 evalOp1 Len iv@(IntVal v) = return iv
@@ -340,8 +341,11 @@ toBool _ = True
 eval :: Block -> StateT Store IO ()
 eval (Block ss) = mapM_ evalS ss
 
+-- evalB :: Block -> StateT Store IO ()
+-- evalB (Block ss) = mapM_ evalS ss
 evalB :: Block -> StateT Store IO ()
-evalB (Block ss) = mapM_ evalS ss
+evalB (Block []) = return ()
+evalB (Block (s : ss)) = evalS s >> evalB (Block ss)
 
 -- | Statement evaluator
 evalS :: Statement -> StateT Store IO ()
@@ -379,44 +383,45 @@ step (Block (call@(CallSt (Call v argexps)) : otherSs)) = do
   if rerun s
     then do
       S.modify (\s -> s {rerun = False})
-      return $ checkEmpty otherSs
+      S.get >>= \safter -> return $ checkEmpty $ block safter
     else do
       S.put s {block = Block otherSs}
-      return $ checkEmpty otherSs
+      S.get >>= \safter -> return $ checkEmpty $ block safter
 step (Block ((If e (Block ss1) (Block ss2)) : otherSs)) = do
   v <- evalE e
   s <- S.get
   if rerun s
     then do
       S.modify (\s -> s {rerun = False})
-      return $ checkEmpty otherSs
+      S.get >>= \safter -> return $ checkEmpty $ block safter
     else do
       if toBool v
         then S.put s {block = Block (ss1 ++ otherSs)}
         else S.put s {block = Block (ss2 ++ otherSs)}
-      return $ checkEmpty otherSs
+      S.get >>= \safter -> return $ checkEmpty $ block safter
 step (Block (w@(While e (Block ss)) : otherSs)) = do
   v <- evalE e
   s <- S.get
   if rerun s
     then do
       S.modify (\s -> s {rerun = False})
-      return $ checkEmpty otherSs
+      S.get >>= \safter -> return $ checkEmpty $ block safter
     else do
+      lift $ putStrLn "in while loop"
       if toBool v
         then S.put s {block = Block (ss ++ [w] ++ otherSs)}
         else S.put s {block = Block otherSs}
-      return $ checkEmpty otherSs
+      S.get >>= \safter -> return $ checkEmpty $ block safter
 step (Block (a@(Assign v e) : otherSs)) = do
   evalS a
   s <- S.get
   if rerun s
     then do
       S.modify (\s -> s {rerun = False})
-      return $ checkEmpty otherSs
+      S.get >>= \safter -> return $ checkEmpty $ block safter
     else do
       S.put s {block = Block otherSs}
-      return $ checkEmpty otherSs
+      S.get >>= \safter -> return $ checkEmpty $ block safter
 step (Block ((Repeat b e) : otherSs)) = step (Block (While (Op1 Not e) b : otherSs))
 step (Block (r@(Return exp) : otherSs)) = do
   evalS r
@@ -424,17 +429,17 @@ step (Block (r@(Return exp) : otherSs)) = do
   if rerun s
     then do
       S.modify (\s -> s {rerun = False})
-      return $ checkEmpty otherSs
+      S.get >>= \safter -> return $ checkEmpty $ block safter
     else return ExitSuccess
 step (Block (empty : otherSs)) = do
   s <- S.get
   S.put s {block = Block otherSs}
-  return $ checkEmpty otherSs
+  S.get >>= \safter -> return $ checkEmpty $ block safter
 step b@(Block []) = return ExitSuccess
 
-checkEmpty :: [Statement] -> ExitStatus
-checkEmpty [] = ExitSuccess
-checkEmpty _ = Running
+checkEmpty :: Block -> ExitStatus
+checkEmpty (Block []) = ExitSuccess
+checkEmpty (Block _) = Running
 
 -- | Evaluate this thread for a specified number of steps
 -- boundedStep :: Int -> Block -> StateT Store IO Block
