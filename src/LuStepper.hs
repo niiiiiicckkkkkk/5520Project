@@ -273,9 +273,13 @@ setEnv (n : ns) (e : es) fstr = do
   case v of
     EnvTableK k -> do
       ref <- resolveVar (Name k)
-      t <- index ref
-      S.put fstr
-      update ref t
+      if (Map.member k (env fstr))
+        then do
+          S.put fstr
+        else do
+          t <- index ref
+          S.put fstr
+          update ref t
     _ -> do
       S.put fstr
   update (Ref n) v
