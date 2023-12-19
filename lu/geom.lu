@@ -1,0 +1,32 @@
+function apply (f, g, arg)
+    f(arg)
+    g(arg)
+end 
+
+function mkShift(shift)
+    function f (point)
+        point.x = point.x + shift.x 
+        point.y = point.y + shift.y 
+    end 
+    return f 
+end 
+
+function shiftPly(shift, poly)
+    i = 0 
+    shiftPnt = mkShift(shift)
+    while i < # poly do 
+        apply(shiftPnt, shiftPnt, poly[i])
+        i = i + 1
+    end 
+end 
+
+triangle = {
+    [0] = {x = 0, y = 0},
+    [1] = {x = 2, y = 0},
+    [2] = {x = 1, y = 1}
+}
+
+shiftPly({x = 0, y = 500}, triangle)
+;
+;
+;
